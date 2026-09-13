@@ -11,9 +11,14 @@ import time
 from pathlib import Path
 
 from analysis import hashing
+from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
+from analysis.correlation import correlate
+from analysis.execution_history import collect_execution_history
+from analysis.execution_model import CollectionWindow
 from analysis.files import list_files
 from analysis.system import get_system_info
-from backend.collectors import process_snapshot
+from analysis.timeline import build_timeline
+from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, process_snapshot
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
 from compiler.parser import parse_validated_command
@@ -21,6 +26,11 @@ from communication.dispatcher import execute_command
 from reports.report import create_report
 
 TERMINAL = {"completed", "failed", "partially_completed", "cancelled", "interrupted"}
+
+# Persisted timeline entries per investigation. The timeline is derived from
+# records that are themselves stored, so this bound costs detail in the stored
+# view, never evidence.
+MAX_PERSISTED_TIMELINE = 5000
 
 
 class ServiceError(ValueError):
@@ -96,9 +106,14 @@ class Workstation:
 
     def related(self, case_id, table):
         self.get_case(case_id)
-        if table not in {"evidence", "findings", "reports", "transitions", "executions"}:
+        # Named here rather than interpolated blindly: `table` reaches this
+        # method straight from the URL.
+        if table not in {"evidence", "findings", "reports", "transitions", "executions",
+                         "execution_events", "artifact_observations", "timeline_events",
+                         "finding_evidence"}:
             raise ServiceError("Unknown collection")
-        rows = self.store.rows(f"SELECT * FROM {table} WHERE investigation_id=? ORDER BY rowid", (case_id,))
+        order = "timestamp" if table in {"execution_events", "timeline_events"} else "rowid"
+        rows = self.store.rows(f"SELECT * FROM {table} WHERE investigation_id=? ORDER BY {order}", (case_id,))
         for row in rows:
             for key in ("payload", "normalized_command", "result", "error", "versions"):
                 if key in row and row[key] is not None:
@@ -114,6 +129,7 @@ class Workstation:
         paths = data.get("paths", [])
         if not isinstance(paths, list) or len(paths) > 20 or any(not isinstance(p, str) or not p or not os.path.isabs(p) for p in paths):
             raise ServiceError("paths must be at most 20 explicit absolute file/directory paths")
+        options = self._collection_options(data)
         with self.lock:
             case = self.get_case(case_id)
             if case["status"] != "created":
@@ -124,8 +140,28 @@ class Workstation:
                 db.execute("UPDATE investigations SET status='collecting',started_at=? WHERE id=?", (now(), case_id))
                 db.execute("INSERT INTO transitions(investigation_id,state,timestamp,detail) VALUES (?,?,?,?)", (case_id, "collecting", now(), "Queued for local collector"))
             self.cancel_events[case_id] = threading.Event()
-            self.queue.put_nowait((self._collect, (case_id, paths)))
+            self.queue.put_nowait((self._collect, (case_id, paths, options)))
         return self.get_case(case_id)
+
+    @staticmethod
+    def _collection_options(data):
+        """Validate the bounded collection settings an investigator may choose."""
+        try:
+            window = CollectionWindow.resolve(data.get("window_hours"))
+        except ValueError as error:
+            raise ServiceError(str(error)) from error
+        maximum = data.get("max_processes", DEFAULT_MAX_PROCESSES)
+        try:
+            maximum = int(maximum)
+        except (TypeError, ValueError) as error:
+            raise ServiceError("max_processes must be an integer") from error
+        if not 1 <= maximum <= MAX_PROCESSES_CEILING:
+            raise ServiceError(f"max_processes must be between 1 and {MAX_PROCESSES_CEILING}")
+        include = data.get("include_command_lines", False)
+        if not isinstance(include, bool):
+            raise ServiceError("include_command_lines must be true or false")
+        return {"window_hours": window.requested_hours, "max_processes": maximum,
+                "include_command_lines": include}
 
     def cancel(self, case_id):
         case = self.get_case(case_id)
@@ -160,6 +196,63 @@ class Workstation:
             db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?,?,?)", (evidence_id, case_id, execution_id, action, source, now(), state, encode(result if not error else {"error": error, "classification": "UNAVAILABLE"})))
         return state, result, evidence_id
 
+    def _persist_analysis(self, case_id, execution, artifacts, correlation, processes, evidence_ids):
+        """Write execution events, artifacts, findings and the timeline.
+
+        One transaction: an investigation must never be left holding findings
+        that reference evidence rows that were not committed.
+        """
+        execution_evidence = evidence_ids.get("EXECUTION HISTORY")
+        artifact_evidence = evidence_ids.get("ARTIFACTS")
+        timeline = build_timeline(execution=execution, artifacts=artifacts, processes=processes,
+                                  findings=correlation["findings"],
+                                  transitions=self.related(case_id, "transitions"))
+        with self.store.transaction() as db:
+            for event in execution.get("events", []) or []:
+                db.execute(
+                    "INSERT INTO execution_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (identifier(), case_id, execution_evidence, event.get("source"),
+                     event.get("source_record_id"), event.get("timestamp"), event.get("last_seen"),
+                     event.get("process_name"), event.get("executable"), event.get("pid"),
+                     event.get("parent_pid"), str(event.get("user")) if event.get("user") is not None else None,
+                     event.get("classification"), event.get("collection_status"), encode(event)))
+            for record in artifacts.get("artifacts", []) or []:
+                db.execute(
+                    "INSERT INTO artifact_observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (identifier(), case_id, artifact_evidence, record["path"], record["filename"],
+                     record.get("extension"), record.get("size_bytes"), record.get("modified"),
+                     record.get("hash"), record["collection_status"], record.get("source", "unknown"),
+                     encode(record)))
+            for finding in correlation["findings"]:
+                finding_id = identifier()
+                db.execute(
+                    "INSERT INTO findings (id,investigation_id,evidence_id,category,severity,title,explanation,classification,confidence,detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (finding_id, case_id, self._finding_evidence_id(finding, evidence_ids), finding["category"],
+                     finding["severity"], finding["title"], finding["explanation"], finding["classification"],
+                     finding["confidence"], encode(finding.get("evidence_references", []))))
+                for reference in finding.get("evidence_references", []):
+                    db.execute(
+                        "INSERT INTO finding_evidence (finding_id,investigation_id,kind,reference,detail) VALUES (?,?,?,?,?)",
+                        (finding_id, case_id, reference.get("kind", "unknown"), str(reference.get("id")),
+                         encode({k: v for k, v in reference.items() if k not in ("kind", "id")})))
+            for entry in (timeline["entries"] + timeline["undated_entries"])[:MAX_PERSISTED_TIMELINE]:
+                db.execute(
+                    "INSERT INTO timeline_events (investigation_id,kind,timestamp,title,source,classification,payload) VALUES (?,?,?,?,?,?,?)",
+                    (case_id, entry["kind"], entry["timestamp"], entry["title"], entry.get("source"),
+                     entry.get("classification"), encode(entry)))
+
+    @staticmethod
+    def _finding_evidence_id(finding, evidence_ids):
+        """Point a finding at the evidence record its source step produced."""
+        kinds = {reference.get("kind") for reference in finding.get("evidence_references", [])}
+        if "execution_event" in kinds or "telemetry_source" in kinds:
+            return evidence_ids.get("EXECUTION HISTORY")
+        if "artifact" in kinds:
+            return evidence_ids.get("ARTIFACTS")
+        if "process" in kinds:
+            return evidence_ids.get("PROCESSES")
+        return None
+
     def _finalize(self, case_id, status, limitation=None):
         completed = now()
         report = self.report_payload(case_id, status=status)
@@ -172,7 +265,9 @@ class Workstation:
             db.execute("INSERT INTO transitions(investigation_id,state,timestamp,detail) VALUES (?,?,?,?)", (case_id, status, completed, limitation))
             db.execute("INSERT INTO reports VALUES (?,?,NULL,?,?,?)", (report["report_id"], case_id, REPORT_SCHEMA_VERSION, report["created_at"], encode(report)))
 
-    def _collect(self, case_id, paths):
+    def _collect(self, case_id, paths, options=None):
+        options = options or {"window_hours": None, "max_processes": DEFAULT_MAX_PROCESSES,
+                              "include_command_lines": False}
         event = self.cancel_events[case_id]
         failures, incomplete = 0, False
         try:
@@ -183,7 +278,20 @@ class Workstation:
             failures += state == "failed"
             with self.store.transaction() as db:
                 db.execute("UPDATE investigations SET device=? WHERE id=?", (encode(device), case_id))
-            steps = [("PROCESSES", lambda: process_snapshot(event), "psutil current process snapshot")]
+
+            steps = [
+                ("PROCESSES",
+                 lambda: process_snapshot(event, max_processes=options["max_processes"],
+                                          include_command_lines=options["include_command_lines"]),
+                 "psutil current process snapshot"),
+                # Historical evidence is collected in its own step so a source
+                # that fails cannot take the rest of the investigation with it.
+                ("EXECUTION HISTORY",
+                 lambda: collect_execution_history(window_hours=options["window_hours"],
+                                                   include_command_lines=options["include_command_lines"],
+                                                   cancel=event),
+                 "documented operating system execution telemetry"),
+            ]
             for path in paths:
                 def observe(path=path):
                     if os.path.isdir(path):
@@ -192,20 +300,43 @@ class Workstation:
                         return {"status": "success", "target": path, "complete": False, "skipped": True, "warnings": ["File exceeds the 128 MiB collection limit; hash and integrity checks skipped."]}
                     return hashing.hash_file(path)
                 steps.append(("FILES", observe, path))
-            results = []
+
+            results, processes, execution, selected = [], {}, {}, []
             for action, collector, source in steps:
                 if event.is_set():
                     break
                 state, result, evidence_id = self._step(case_id, action, collector, source)
                 failures += state == "failed"
                 incomplete |= result.get("complete") is False or bool(result.get("truncated"))
-                results.append((result, evidence_id))
+                results.append((action, result, evidence_id))
+                if action == "PROCESSES":
+                    processes = result
+                elif action == "EXECUTION HISTORY":
+                    execution = result
+                elif action == "FILES" and result.get("hash"):
+                    selected.append(artifact_from_hash_result(result, source="investigator-selected path"))
+
+            # Artifacts named by the historical evidence. Explicitly selected
+            # files are already hashed above and are merged in rather than read
+            # a second time.
+            referenced = {}
+            if not event.is_set():
+                state, referenced, artifact_evidence = self._step(
+                    case_id, "ARTIFACTS",
+                    lambda: collect_artifacts(events=execution.get("events", []), cancel=event),
+                    "files referenced by historical execution evidence")
+                failures += state == "failed"
+                incomplete |= referenced.get("complete") is False
+                results.append(("ARTIFACTS", referenced, artifact_evidence))
+            artifacts = merge_artifacts(
+                {"artifacts": selected, "statistics": {"selected_path_count": len(selected)}, "warnings": []},
+                referenced)
+
             self.transition(case_id, "analyzing")
-            for result, evidence_id in results:
-                indicators = result.get("indicators", [])
-                for indicator in indicators:
-                    with self.store.transaction() as db:
-                        db.execute("INSERT INTO findings VALUES (?,?,?,?,?,?,?,?)", (identifier(), case_id, evidence_id, "filename", indicator.get("level", "info"), indicator["label"], indicator["detail"], "INFERRED"))
+            evidence_ids = {action: evidence_id for action, _result, evidence_id in results}
+            correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
+            self._persist_analysis(case_id, execution, artifacts, correlation, processes, evidence_ids)
+
             self.transition(case_id, "finalizing")
             status = "cancelled" if event.is_set() else "partially_completed" if failures or incomplete else "completed"
             self._finalize(case_id, status)
@@ -219,21 +350,123 @@ class Workstation:
         finally:
             self.cancel_events.pop(case_id, None)
 
+    def _evidence_payload(self, case_id, action):
+        """The payload of the most recent evidence record for one step."""
+        for record in reversed(self.related(case_id, "evidence")):
+            if record["type"] == action and isinstance(record["payload"], dict):
+                return record["payload"]
+        return {}
+
     def report_payload(self, case_id, status=None):
         case = self.get_case(case_id)
+        execution = self._evidence_payload(case_id, "EXECUTION HISTORY")
+        processes = self._evidence_payload(case_id, "PROCESSES")
+        artifacts = [dict(row["payload"]) if isinstance(row["payload"], dict) else {}
+                     for row in self.related(case_id, "artifact_observations")]
+        findings = self.related(case_id, "findings")
+        timeline = self.related(case_id, "timeline_events")
+        sources = execution.get("sources", []) or []
+        available = [source for source in sources if source["status"] == "AVAILABLE"]
+
         return {"report_id": identifier(), "schema_version": REPORT_SCHEMA_VERSION, "created_at": now(),
                 "investigation_id": case_id, "investigation": case, "status": status or case["status"],
                 "versions": versions(), "device": case["device"],
-                "summary": "Authorized local defensive collection. Observations are limited to the sources listed below.",
+                "summary": self._summary(case, execution, processes, artifacts, findings, available, sources),
+                "collection_window": execution.get("window"),
+                "historical_execution": {
+                    "telemetry_available": bool(available),
+                    "platform": execution.get("platform"),
+                    "sources": sources,
+                    "event_count": execution.get("event_count", 0),
+                    "undated_event_count": execution.get("undated_event_count", 0),
+                    "truncated": execution.get("truncated", False),
+                    "events": execution.get("events", []),
+                    "limits": execution.get("limits", {}),
+                    "statistics": execution.get("statistics", {}),
+                },
+                "artifacts": artifacts,
+                "event_timeline": timeline,
+                "findings": findings,
                 "evidence": self.related(case_id, "evidence"), "executions": self.related(case_id, "executions"),
-                "findings": self.related(case_id, "findings"), "timeline": self.related(case_id, "transitions"),
-                "limitations": ["CURRENT OBSERVATION: process snapshots do not establish historical execution.",
-                                "HISTORICAL EVIDENCE: no OS event log or historical execution source was collected.",
-                                "A hash compares bytes; it does not prove authenticity or acquisition-chain integrity.",
-                                "Only explicitly selected file sources were inspected. No whole-disk acquisition was performed.",
-                                "Live collection changes host activity and cannot provide an atomic snapshot of the device.",
-                                "Unavailable, skipped and truncated fields remain explicit in each evidence payload."],
-                "provenance": {"collector": "JOCKY local Python service", "classification": "OBSERVED", "offline": True}}
+                "timeline": self.related(case_id, "transitions"),
+                "current_process_snapshot": {
+                    "collected_at": processes.get("collected_at"),
+                    "statistics": processes.get("statistics", {}),
+                    "limits": processes.get("limits", {}),
+                    "truncated": processes.get("truncated", False),
+                },
+                # The full per-process listing is bulky and rarely the point of
+                # the report, so it sits in an appendix rather than dominating
+                # the body. Nothing is dropped.
+                "appendix_process_listing": processes.get("processes", []),
+                "unavailable_telemetry": [
+                    {"source": source["name"], "status": source["status"], "detail": source["detail"],
+                     "location": source.get("location")}
+                    for source in sources if source["status"] != "AVAILABLE"
+                ],
+                "limitations": self._limitations(execution, processes, artifacts, available, sources),
+                "provenance": {"collector": "JOCKY local Python service", "classification": "OBSERVED",
+                               "offline": True, "telemetry_sources": [source["name"] for source in available],
+                               "correlation": "JOCKY rule-based correlation; every finding names its evidence"}}
+
+    @staticmethod
+    def _summary(case, execution, processes, artifacts, findings, available, sources):
+        """A plain statement of what this investigation can and cannot support."""
+        if available:
+            basis = ("Historical execution evidence was collected from "
+                     + ", ".join(source["name"] for source in available) + ".")
+        else:
+            basis = ("No historical execution telemetry was available on this host, so this investigation "
+                     "rests on current observation only and cannot establish what ran before collection.")
+        return (f"Authorized local defensive collection for '{case['title']}'. {basis} "
+                f"{execution.get('event_count', 0)} historical execution records, "
+                f"{processes.get('statistics', {}).get('processes_recorded', 0)} current processes, "
+                f"{len(artifacts)} artifacts and {len(findings)} findings. "
+                f"{len([s for s in sources if s['status'] != 'AVAILABLE'])} telemetry sources were unavailable; "
+                "they are listed in full below. Observations are limited to the sources named in this report.")
+
+    @staticmethod
+    def _limitations(execution, processes, artifacts, available, sources):
+        limitations = [
+            "CURRENT OBSERVATION: a process snapshot records the present. It does not establish historical execution.",
+            "HISTORICAL EVIDENCE: each source records something different, and each event states what its source proves.",
+            "A hash compares bytes; it does not prove authenticity or acquisition-chain integrity.",
+            "Only explicitly selected file sources and files named by execution evidence were inspected. "
+            "No whole-disk acquisition was performed.",
+            "Live collection changes host activity and cannot provide an atomic snapshot of the device.",
+            "Unavailable, skipped and truncated fields remain explicit in each evidence payload.",
+            "Findings are rule-based triage, not malware verdicts. A name, extension or directory is a reason "
+            "to look, never a conclusion.",
+        ]
+        if not available:
+            limitations.append(
+                "No historical execution source was collected on this host. Absence of execution evidence "
+                "here reflects absent telemetry, not absent activity.")
+        else:
+            limitations.append(
+                "Absence of an execution event is not evidence that a program did not run: every source has "
+                "a retention limit and records only what it was configured to record.")
+        if execution.get("truncated"):
+            limitations.append("Historical execution collection reached its bounds; older events were not read.")
+        if execution.get("undated_event_count"):
+            limitations.append(
+                f"{execution['undated_event_count']} execution records carry no timestamp because their "
+                "source does not record one; they cannot be placed on the timeline.")
+        if processes.get("truncated"):
+            limitations.append(
+                f"The process snapshot was truncated at {processes.get('limits', {}).get('max_processes')} "
+                "processes; higher process identifiers were not recorded.")
+        if not (execution.get("limits", {}) or {}).get("command_lines_collected", False):
+            limitations.append(
+                "Command-line arguments were not collected. They frequently carry credentials and are "
+                "opt-in per investigation; when enabled they are redacted, which is a mitigation and not a "
+                "guarantee.")
+        missing = sum(1 for record in artifacts if record.get("collection_status") == "MISSING")
+        if missing:
+            limitations.append(
+                f"{missing} artifacts named by execution evidence were absent at collection time; their "
+                "contents could not be examined.")
+        return limitations
 
     def get_report(self, report_id):
         rows = self.store.rows("SELECT payload FROM reports WHERE id=?", (report_id,))

@@ -16,6 +16,15 @@ from backend.versions import versions
 from compiler.Language_meta import LANGUAGE_REFERENCE
 
 
+# Sources each platform collector attempts. Availability is decided per run.
+SOURCE_NAMES = {
+    "Linux": ["systemd journal", "shell history", "kernel audit log", "process accounting",
+              "login sessions (wtmp)"],
+    "Windows": ["Windows Security 4688", "Sysmon Event 1", "PowerShell operational log",
+                "Windows Prefetch", "UserAssist"],
+}
+
+
 def create_app(service, token=None, instance_id=None, shutdown=None):
     app = Flask(__name__)
     app.config.update(MAX_CONTENT_LENGTH=1024 * 1024, SESSION_TOKEN=token or secrets.token_urlsafe(32), INSTANCE_ID=instance_id or secrets.token_hex(16))
@@ -72,7 +81,26 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
 
     @app.get("/api/v1/capabilities")
     def capabilities():
-        return {"versions": versions(), "current_process_snapshot": True, "historical_execution_telemetry": False,
+        # Which sources exist for this platform is static; whether each one is
+        # readable is decided per collection and reported in the report, so this
+        # advertises the attempt rather than a result it has not established.
+        from analysis.execution_history import collector_for
+        from analysis.execution_model import CollectionWindow
+        from analysis.artifacts import MAX_ARTIFACTS
+        from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING
+        collector = collector_for()
+        return {"versions": versions(), "current_process_snapshot": True,
+                "historical_execution_telemetry": collector.platform_name in {"Linux", "Windows"},
+                "historical_execution_platform": collector.platform_name,
+                "historical_execution_sources": SOURCE_NAMES.get(collector.platform_name, []),
+                "historical_execution_availability": (
+                    "Each source is probed at collection time and reported as AVAILABLE, NOT_AVAILABLE, "
+                    "NOT_ENABLED or PERMISSION_DENIED. JOCKY never enables a disabled source."),
+                "collection_window_default_hours": CollectionWindow.DEFAULT_HOURS,
+                "collection_window_max_hours": CollectionWindow.MAX_HOURS,
+                "command_line_collection": "opt-in per investigation; redacted when enabled",
+                "max_processes_default": DEFAULT_MAX_PROCESSES, "max_processes_ceiling": MAX_PROCESSES_CEILING,
+                "max_artifacts": MAX_ARTIFACTS,
                 "offline_pdf": True, "max_sources": 20, "max_hash_bytes": 134217728,
                 "encryption": "explicit passphrase export only", "collection_cancellation": "between bounded steps"}
 
@@ -100,9 +128,15 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
     def cancel(case_id):
         return service.cancel(case_id), 202
 
+    # Readable URL names for the stored collections. The service validates the
+    # resolved table name, so an unknown alias falls through to that check.
+    COLLECTIONS = {"timeline": "transitions", "artifacts": "artifact_observations",
+                   "execution-events": "execution_events", "event-timeline": "timeline_events",
+                   "finding-evidence": "finding_evidence"}
+
     @app.get("/api/v1/investigations/<case_id>/<collection>")
     def related(case_id, collection):
-        return {"items": service.related(case_id, "transitions" if collection == "timeline" else collection)}
+        return {"items": service.related(case_id, COLLECTIONS.get(collection, collection))}
 
     @app.get("/api/v1/reports/<report_id>")
     def report(report_id):

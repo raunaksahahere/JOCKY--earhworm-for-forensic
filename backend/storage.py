@@ -42,6 +42,25 @@ MIGRATIONS = {1: (
     "CREATE TABLE transitions (id INTEGER PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), state TEXT NOT NULL, timestamp TEXT NOT NULL, detail TEXT)",
     "CREATE TABLE hash_observations (id TEXT PRIMARY KEY, path TEXT NOT NULL, algorithm TEXT NOT NULL, digest TEXT NOT NULL, size_bytes INTEGER NOT NULL, timestamp TEXT NOT NULL, execution_id TEXT REFERENCES executions(id), provenance TEXT NOT NULL)",
     "CREATE INDEX hash_path ON hash_observations(path,timestamp)",
+), 2: (
+    # Historical execution evidence, the artifacts it names, the merged
+    # timeline, and the evidence each finding rests on. Payload columns hold
+    # the normalized record; file contents are never stored, only metadata and
+    # digests, so a database stays proportional to the investigation rather
+    # than to the disk it examined.
+    "CREATE TABLE execution_events (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), evidence_id TEXT REFERENCES evidence(id), source TEXT NOT NULL, source_record_id TEXT, timestamp TEXT, last_seen TEXT, process_name TEXT, executable TEXT, pid INTEGER, parent_pid INTEGER, account TEXT, classification TEXT NOT NULL, collection_status TEXT NOT NULL, payload TEXT NOT NULL)",
+    "CREATE INDEX execution_event_case ON execution_events(investigation_id,timestamp)",
+    "CREATE INDEX execution_event_executable ON execution_events(executable)",
+    "CREATE TABLE artifact_observations (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), evidence_id TEXT REFERENCES evidence(id), path TEXT NOT NULL, filename TEXT NOT NULL, extension TEXT, size_bytes INTEGER, modified TEXT, hash TEXT, collection_status TEXT NOT NULL, source TEXT NOT NULL, payload TEXT NOT NULL)",
+    "CREATE INDEX artifact_case ON artifact_observations(investigation_id,path)",
+    "CREATE TABLE timeline_events (id INTEGER PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), kind TEXT NOT NULL, timestamp TEXT, title TEXT NOT NULL, source TEXT, classification TEXT, payload TEXT NOT NULL)",
+    "CREATE INDEX timeline_case ON timeline_events(investigation_id,timestamp)",
+    "CREATE TABLE finding_evidence (id INTEGER PRIMARY KEY, finding_id TEXT NOT NULL REFERENCES findings(id), investigation_id TEXT NOT NULL REFERENCES investigations(id), kind TEXT NOT NULL, reference TEXT NOT NULL, detail TEXT)",
+    "CREATE INDEX finding_evidence_finding ON finding_evidence(finding_id)",
+    # Existing findings keep their rows; confidence is unqualified until a
+    # collector that records one writes it.
+    "ALTER TABLE findings ADD COLUMN confidence TEXT NOT NULL DEFAULT 'unqualified'",
+    "ALTER TABLE findings ADD COLUMN detail TEXT",
 )}
 
 

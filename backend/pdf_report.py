@@ -12,6 +12,9 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 
 _LOCK = threading.Lock()
+
+# A report a human can read. The JSON export and the database keep everything.
+MAX_RENDERED_ROWS = 400
 FONT_ROOT = Path(__file__).resolve().parent.parent / "assets" / "fonts"
 
 
@@ -71,19 +74,143 @@ def render_pdf(report):
                 text = f"{prefix}: {value if value is not None else 'UNAVAILABLE'}"
                 for start in range(0, len(text), 1800):
                     p(text[start:start+1800])
-        for label, key in (("Device identity", "device"), ("Investigator / workstation", "investigation"),
-                           ("Findings and severity", "findings"), ("Collection timeline", "timeline"),
-                           ("Evidence, processes, files, hashes and integrity", "evidence"),
-                           ("Execution results", "executions"), ("Command identity", "command"), ("Normalized command", "normalized_command"), ("Command result", "result"),
-                           ("Errors", "errors"), ("Warnings", "warnings"),
-                           ("Warnings and limitations", "limitations"), ("Versions and provenance", "versions"), ("Provenance", "provenance")):
+        def listing(records, columns, *, empty="none recorded", limit=MAX_RENDERED_ROWS):
+            """One line per record. Keeps a long section readable and bounded."""
+            if not records:
+                p(empty)
+                return
+            for record in records[:limit]:
+                parts = []
+                for label, key in columns:
+                    value = record.get(key)
+                    if isinstance(value, (dict, list)):
+                        value = f"{len(value)} entries"
+                    parts.append(f"{label} {value if value not in (None, '') else 'UNAVAILABLE'}")
+                p(" | ".join(parts))
+            if len(records) > limit:
+                p(f"... {len(records) - limit} further entries are omitted from this PDF for length. "
+                  "The complete set is present in the JSON export and in the investigation database.")
+
+        p("Device information", heading)
+        fields(report.get("device", {}))
+
+        p("Collection window", heading)
+        window = report.get("collection_window")
+        if window:
+            p(f"{window.get('start')} to {window.get('end')} "
+              f"({window.get('requested_hours')} hours requested; bounded at {window.get('maximum_hours')})")
+            p("Historical collection is always bounded. Activity outside this window was not examined.")
+        else:
+            p("UNAVAILABLE: no historical collection window was recorded for this investigation.")
+
+        p("Historical execution evidence", heading)
+        history = report.get("historical_execution", {})
+        if history.get("telemetry_available"):
+            p(f"Platform: {history.get('platform')} | {history.get('event_count', 0)} records "
+              f"| {history.get('undated_event_count', 0)} undated | truncated: {history.get('truncated')}")
+            p("Sources consulted:")
+            listing(history.get("sources", []),
+                    [("", "name"), ("status", "status"), ("records", "event_count"),
+                     ("proves", "evidence_strength")], limit=50)
+            p("Records:")
+            listing(history.get("events", []),
+                    [("", "timestamp"), ("", "process_name"), ("image", "executable"),
+                     ("pid", "pid"), ("user", "user"), ("source", "source")])
+        else:
+            p("NOT COLLECTED: no historical execution telemetry was available on this host. This "
+              "investigation cannot establish what ran before collection started.")
+            listing(history.get("sources", []), [("", "name"), ("status", "status"), ("", "detail")], limit=50)
+
+        p("Current process snapshot", heading)
+        snapshot = report.get("current_process_snapshot", {})
+        p("CURRENT OBSERVATION. A running process establishes the present, not the past.")
+        fields(snapshot)
+        p("The full per-process listing is in the appendix at the end of this report.")
+
+        p("Timeline", heading)
+        p("Ordered by the timestamp each source recorded. Undated records are listed separately.")
+        listing(report.get("event_timeline", []),
+                [("", "timestamp"), ("", "kind"), ("", "title"), ("source", "source")])
+
+        p("Artifacts", heading)
+        artifacts = report.get("artifacts", [])
+        listing(artifacts, [("", "path"), ("status", "collection_status"), ("bytes", "size_bytes"),
+                            ("modified", "modified")])
+
+        p("Hashes", heading)
+        hashed = [record for record in artifacts if record.get("hash")]
+        p("A hash compares bytes. It does not prove authenticity or acquisition-chain integrity.")
+        listing(hashed, [("", "path"), ("", "hash_algorithm"), ("", "hash")],
+                empty="No artifact digests were recorded.")
+
+        p("Indicators", heading)
+        flagged = [record for record in artifacts if record.get("indicators")]
+        if flagged:
+            for record in flagged[:MAX_RENDERED_ROWS]:
+                for indicator in record["indicators"]:
+                    p(f"{record['path']} | {indicator.get('level')} | {indicator.get('label')} | "
+                      f"{indicator.get('detail')}")
+        else:
+            p("No filename indicators were raised.")
+
+        p("Integrity results", heading)
+        checked = [record for record in artifacts if record.get("integrity") or record.get("integrity_history")]
+        listing(checked, [("", "path"),
+                          ("structural", "integrity"), ("versus ledger", "integrity_history")],
+                empty="No structural integrity checks were recorded.")
+
+        p("Findings", heading)
+        p("Rule-based triage. A name, extension or directory is a reason to look, never a verdict.")
+        listing(report.get("findings", []),
+                [("", "severity"), ("", "title"), ("confidence", "confidence"),
+                 ("classification", "classification")])
+
+        p("Evidence references", heading)
+        listing(report.get("evidence", []),
+                [("", "id"), ("", "type"), ("source", "source"), ("status", "status"),
+                 ("collected", "collected_at")])
+
+        p("Collection limitations", heading)
+        fields(report.get("limitations", []))
+
+        p("Unavailable telemetry", heading)
+        listing(report.get("unavailable_telemetry", []),
+                [("", "source"), ("", "status"), ("", "detail")],
+                empty="Every telemetry source JOCKY consulted was available.")
+
+        p("Provenance", heading)
+        fields(report.get("provenance", {}))
+
+        p("Version information", heading)
+        fields(report.get("versions", {}))
+
+        p("Investigation state history", heading)
+        listing(report.get("timeline", []),
+                [("", "timestamp"), ("", "state"), ("", "detail")])
+
+        # Single-command reports carry these instead of a collection.
+        for label, key in (("Command identity", "command"), ("Normalized command", "normalized_command"),
+                           ("Command result", "result"), ("Errors", "errors"), ("Warnings", "warnings")):
             if key in report:
                 p(label, heading)
-                value = report[key]
-                if key == "executions":
-                    evidence_by_execution = {item.get("execution_id"): item["id"] for item in report.get("evidence", []) if item.get("execution_id")}
-                    value = [{**{k: v for k, v in item.items() if k != "result"}, "result_reference": evidence_by_execution[item["id"]]} if item.get("id") in evidence_by_execution else item for item in value]
-                fields(value)
+                fields(report[key])
+
+        p("Appendix A: execution results", heading)
+        evidence_by_execution = {item.get("execution_id"): item["id"]
+                                 for item in report.get("evidence", []) if item.get("execution_id")}
+        listing([{**{k: v for k, v in item.items() if k != "result"},
+                  "result_reference": evidence_by_execution.get(item["id"], "UNAVAILABLE")}
+                 for item in report.get("executions", [])],
+                [("", "command"), ("state", "state"), ("started", "started_at"),
+                 ("evidence", "result_reference")])
+
+        p("Appendix B: current process listing", heading)
+        p("The complete snapshot, moved here so it does not dominate the report body.")
+        listing(report.get("appendix_process_listing", []),
+                [("pid", "pid"), ("", "name"), ("image", "executable"),
+                 ("parent", "parent_pid"), ("started", "started_at")],
+                empty="No processes were recorded.")
+
         if missing:
             p("Font coverage limitation", heading)
             p("Unsupported glyphs are preserved as code-point labels: " + ", ".join(sorted(missing)) + ". Exact Unicode text remains in the JSON report.")
