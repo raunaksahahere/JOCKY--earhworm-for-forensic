@@ -2,6 +2,92 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.4.0 — 2026-09-13
+
+Historical execution evidence. An investigation can now answer "what execution
+activity and related artifacts can the evidence on this device support?" rather
+than only "what is running right now?".
+
+### Added
+
+- **Historical execution collection**, behind one interface with per-platform
+  implementations (`analysis/execution_history.py`). Linux reads the systemd
+  journal, shell history, the kernel audit log, BSD process accounting and wtmp
+  login records. Windows reads Security 4688, Sysmon event 1, the PowerShell
+  operational log, Prefetch file metadata and UserAssist. Every source is
+  read-only and already present: JOCKY never enables auditing, installs a
+  sensor, or changes a security setting. A source that is off is reported
+  NOT_ENABLED, not switched on.
+- **A normalized execution event** (`analysis/execution_model.py`) carrying
+  timestamp, process name, executable, parent, PIDs, user, interpreter, source,
+  source record id, hash and raw source metadata — with per-field provenance
+  (OBSERVED, DERIVED, UNAVAILABLE) and, on every event, a plain statement of
+  what its source actually proves. A journal record says the image was running
+  when it logged, not when it started. A shell history line says a command was
+  typed, not that it ran.
+- **A bounded collection window**, defaulting to 7 days and capped at 90. There
+  is no unbounded mode. The window is shown in the UI and the report.
+- **Artifact collection** (`analysis/artifacts.py`) driven by evidence:
+  investigator-selected paths plus executables named by execution records. One
+  directory level, never recursive, bounded at 200 artifacts and 128 MiB per
+  digest. A file the evidence names but which is absent is recorded as MISSING
+  rather than omitted.
+- **Correlation and findings** (`analysis/correlation.py`): missing executable,
+  execution from a writable or temporary location, artifact corroborating an
+  execution record, hash changed since the last observation, structural
+  integrity anomaly, suspicious filename, unavailable telemetry, permission
+  gaps and truncated collection. Every finding carries severity, confidence,
+  classification and the evidence it rests on. None of them call anything
+  malware.
+- **A merged timeline** (`analysis/timeline.py`) over execution events, file
+  metadata, current process observations, findings and investigation state,
+  ordered by the timestamp each source recorded. Records whose source has no
+  timestamp are listed separately rather than placed at an invented time.
+- Schema 2: `execution_events`, `artifact_observations`, `timeline_events` and
+  `finding_evidence`, plus `confidence` and `detail` on findings. Existing
+  databases migrate in place; only metadata and digests are stored, never file
+  contents.
+- Report schema 3 with collection window, historical execution, timeline,
+  artifacts, hashes, indicators, integrity, findings, evidence references,
+  limitations, unavailable telemetry, provenance and versions.
+- Deterministic telemetry fixtures (`tests/fixtures/telemetry.py`) covering
+  known events, a missing executable, a matching artifact, permission denied,
+  unavailable telemetry, truncation, duplicates, malformed records and
+  timestamp ordering.
+
+### Changed
+
+- The current process snapshot is no longer capped at 256. The bound is
+  configurable (default 4096), truncation is deterministic — processes are
+  sorted by identifier, and the omitted range is stated — and the result
+  carries collection statistics with permission failures preserved.
+- Command-line arguments remain off by default and are now opt-in per
+  investigation. When enabled, values matching common credential patterns are
+  masked before storage. That is a mitigation, not a guarantee, and the report
+  says so.
+- The raw per-process listing moved out of the report body into a clearly
+  labelled appendix. Nothing was dropped.
+- `/api/v1/capabilities` reports the platform's telemetry sources and the
+  collection bounds instead of a hardcoded `historical_execution_telemetry:
+  false`.
+- The investigation workspace shows a collection summary — telemetry available
+  or not, the window, and counts of events, artifacts, findings and limitations
+  — read from the engine's report rather than recomputed in the client.
+
+### Forensic honesty
+
+Unchanged and extended: JOCKY still distinguishes CURRENT OBSERVATION from
+HISTORICAL EVIDENCE, INFERRED from OBSERVED, and marks what is UNAVAILABLE. It
+does not claim a program executed unless a source that records execution says
+so, does not fabricate timestamps, and does not label a file as malware because
+of its name.
+
+### Not verified in this release
+
+Windows telemetry parsing is covered by fixtures only. No Windows collector has
+been run against a real Windows host. Windows artifacts and the release
+workflow's Windows job remain unexecuted.
+
 ## 0.3.0 — 2026-09-13
 
 Engine startup and release packaging. The application is now self-contained on

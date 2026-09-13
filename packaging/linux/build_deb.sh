@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUNDLE="$ROOT/flutter_client/build/linux/x64/release/bundle"
-VERSION="${JOCKY_VERSION:-0.3.0}"
+VERSION="${JOCKY_VERSION:-0.4.0}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version' >&2; exit 1; }
 [[ -x "$BUNDLE/jocky_client" ]] || { echo 'Flutter executable is missing; build the release bundle first' >&2; exit 1; }
 [[ -x "$BUNDLE/backend/jocky-backend" ]] || { echo 'Bundled engine is missing; build the release bundle first' >&2; exit 1; }

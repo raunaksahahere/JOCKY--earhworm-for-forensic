@@ -91,7 +91,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.3.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
+`build/deb/jocky_0.4.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.
@@ -144,6 +144,41 @@ The installer includes the entire Flutter release directory and one-directory
 backend. Portable launch is `packaging\windows\launch_portable.ps1 -Bundle
 <absolute-bundle> -Workspace <absolute-workspace>`. Windows binaries and installer
 have not been built on the Linux validation host. Release signing is separate.
+
+## Historical execution evidence
+
+"Analyze This Device" collects system information, a current process snapshot,
+historical execution evidence, the artifacts that evidence names, correlation
+findings and a merged timeline.
+
+Every source is read-only and already present on the host. JOCKY never enables
+auditing, installs a sensor, or changes any security or EDR setting. A source
+that is switched off is reported `NOT_ENABLED`; one that needs privileges JOCKY
+does not hold is reported `PERMISSION_DENIED`.
+
+| Platform | Source | What a record proves |
+| --- | --- | --- |
+| Linux | systemd journal | the image was running when it logged — not when it started |
+| Linux | shell history | a command was entered — not that it ran or succeeded |
+| Linux | kernel audit log | the kernel recorded an execve (usually root-only, often off) |
+| Linux | process accounting | the kernel recorded a process exit (off by default) |
+| Linux | wtmp | a login session opened or closed — session context, not execution |
+| Windows | Security 4688 | Windows recorded a process being created (audit policy is off by default) |
+| Windows | Sysmon event 1 | process creation with parent image and hash (only if Sysmon is deployed) |
+| Windows | PowerShell 4104 | a script block was compiled for execution |
+| Windows | Prefetch | the named executable has run on this volume (metadata only; the body is not parsed) |
+| Windows | UserAssist | the interactive user launched a program, with a run count and last-run time |
+
+Collection is bounded everywhere: a 7-day default window (90-day maximum), 5000
+events, 200 artifacts, one directory level with no recursion, 128 MiB per
+digest. Command-line arguments are off by default, opt-in per investigation,
+and redacted when enabled — a mitigation against credentials in arguments, not
+a guarantee.
+
+Findings are rule-based triage carrying severity, confidence and the evidence
+they rest on. JOCKY does not call anything malware, does not infer execution
+from a source that does not record it, and does not replace an unknown with a
+guess.
 
 ## Contracts, storage and limits
 
