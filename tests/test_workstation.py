@@ -51,7 +51,7 @@ def test_database_migration_restart_backup_rollback(store):
     backup = store.backup()
     with sqlite3.connect(backup) as db:
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
         assert db.execute("SELECT value FROM metadata").fetchone()[0] == "true"
 
 
@@ -110,7 +110,7 @@ def test_paths_windows_and_xdg(tmp_path):
 
 
 def test_collection_history_report_restart(service, store, tmp_path, monkeypatch):
-    monkeypatch.setattr("backend.service.process_snapshot", lambda _: {"status": "success", "processes": [{"pid": 1, "name": "python", "classification": "OBSERVED"}], "warnings": ["CURRENT OBSERVATION only"]})
+    monkeypatch.setattr("backend.service.process_snapshot", lambda *_, **__: {"status": "success", "processes": [{"pid": 1, "name": "python", "classification": "OBSERVED"}], "warnings": ["CURRENT OBSERVATION only"]})
     source = tmp_path / "résumé नमस्ते.pdf.exe"
     source.write_bytes(b"safe test fixture")
     case = service.create_case({"title": "Device Ω", "examiner": "Investigator"})
@@ -121,7 +121,7 @@ def test_collection_history_report_restart(service, store, tmp_path, monkeypatch
     assert len(reports) == 1
     report = reports[0]["payload"]
     assert report["status"] == "completed" and report["device"]["hostname"]
-    assert report["schema_version"] == 2 and report["evidence"]
+    assert report["schema_version"] == 3 and report["evidence"]
     assert store.rows("SELECT * FROM hash_observations")
     assert source.read_bytes() == b"safe test fixture"
     service.close()
@@ -137,8 +137,9 @@ def test_partial_missing_file(service, tmp_path):
     service.collect(case["id"], {"paths": [str(tmp_path / "missing")]})
     assert wait(service, case["id"])["status"] == "partially_completed"
     evidence = service.related(case["id"], "evidence")
-    assert evidence[-1]["status"] == "failed"
-    assert evidence[-1]["payload"]["classification"] == "UNAVAILABLE"
+    files = [record for record in evidence if record["type"] == "FILES"]
+    assert files and files[-1]["status"] == "failed"
+    assert files[-1]["payload"]["classification"] == "UNAVAILABLE"
 
 
 def test_cancellation_and_duplicate(service, monkeypatch):
@@ -217,11 +218,16 @@ def test_process_unavailable(monkeypatch):
         def exe(self): raise psutil.AccessDenied(12)
         def ppid(self): return 1
         def create_time(self): raise psutil.NoSuchProcess(12)
-    monkeypatch.setattr(psutil, 'process_iter', lambda: iter([Process()]))
-    row = process_snapshot()['processes'][0]
+    monkeypatch.setattr(psutil, 'pids', lambda: [12])
+    monkeypatch.setattr(psutil, 'Process', lambda pid: Process())
+    snapshot = process_snapshot()
+    row = snapshot['processes'][0]
     assert row['executable'] is None and row['started_at'] is None
     assert row['unavailable']['executable'] == 'permission_denied'
+    assert row['unavailable']['started_at'] == 'process exited during collection'
     assert row['interpreter'] == 'python'
+    assert snapshot['statistics']['permission_denied'] == 1
+    assert snapshot['classification'] == 'CURRENT_OBSERVATION'
 
 
 def test_sqlite_full_rolls_back_but_preserves_prior_commit(store):
@@ -263,7 +269,7 @@ def test_malformed_legacy_store_never_imports(service, tmp_path, data):
 
 
 def test_failed_collector_gets_durable_report(service, monkeypatch):
-    monkeypatch.setattr('backend.service.process_snapshot', lambda _: (_ for _ in ()).throw(KeyError('unexpected collector bug')))
+    monkeypatch.setattr('backend.service.process_snapshot', lambda *_, **__: (_ for _ in ()).throw(KeyError('unexpected collector bug')))
     case = service.create_case({})
     service.collect(case['id'], {})
     assert wait(service, case['id'])['status'] == 'partially_completed'
@@ -271,12 +277,13 @@ def test_failed_collector_gets_durable_report(service, monkeypatch):
     service.queue.join()
     report = service.related(case['id'], 'reports')[-1]['payload']
     assert report['status'] == 'partially_completed'
-    assert report['executions'][-1]['state'] == 'failed'
-    assert report['evidence'][-1]['status'] == 'failed'
+    assert any(execution['state'] == 'failed' for execution in report['executions'])
+    processes = [record for record in report['evidence'] if record['type'] == 'PROCESSES']
+    assert processes and processes[-1]['status'] == 'failed'
 
 
 def test_report_final_state_matches_timeline(service, monkeypatch):
-    monkeypatch.setattr('backend.service.process_snapshot', lambda _: {'status':'success','processes':[]})
+    monkeypatch.setattr('backend.service.process_snapshot', lambda *_, **__: {'status':'success','processes':[]})
     case = service.create_case({})
     service.collect(case['id'], {})
     wait(service, case['id']); service.queue.join()
@@ -286,7 +293,7 @@ def test_report_final_state_matches_timeline(service, monkeypatch):
 
 
 def test_pdf_generation_failure_does_not_change_report(service, monkeypatch):
-    monkeypatch.setattr('backend.service.process_snapshot', lambda _: {'status':'success','processes':[]})
+    monkeypatch.setattr('backend.service.process_snapshot', lambda *_, **__: {'status':'success','processes':[]})
     case = service.create_case({}); service.collect(case['id'], {})
     wait(service, case['id']); service.queue.join()
     original = service.related(case['id'], 'reports')

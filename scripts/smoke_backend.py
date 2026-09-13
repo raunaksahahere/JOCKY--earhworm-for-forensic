@@ -50,6 +50,23 @@ def smoke(command, workspace):
             if case['status'] in ('completed','partially_completed','failed'): break
             time.sleep(.1)
         assert case['status'] in ('completed','partially_completed'), case
+        # Historical execution evidence, artifacts, findings and the merged
+        # timeline must be produced by the frozen engine, not only by source.
+        history = request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']
+        artifacts = request(session, f"/api/v1/investigations/{case['id']}/artifacts")['items']
+        findings = request(session, f"/api/v1/investigations/{case['id']}/findings")['items']
+        event_timeline = request(session, f"/api/v1/investigations/{case['id']}/event-timeline")['items']
+        stored = request(session, f"/api/v1/investigations/{case['id']}/reports")['items'][-1]['payload']
+        assert stored['schema_version'] == 3, stored['schema_version']
+        assert stored['collection_window']['bounded'] is True
+        assert stored['appendix_process_listing'], 'the process listing must survive in the appendix'
+        sources = stored['historical_execution']['sources']
+        assert sources, 'every telemetry source must be reported, available or not'
+        assert all(source['status'] in ('AVAILABLE','NOT_AVAILABLE','NOT_ENABLED','PERMISSION_DENIED')
+                   for source in sources), sources
+        assert all(event['classification'] == 'HISTORICAL_EVIDENCE' for event in history)
+        assert findings, 'an investigation with evidence must not end with zero findings'
+        telemetry = stored['historical_execution']['telemetry_available']
         stop(process, session)
         process, session = start(command, workspace)
         saved = request(session, '/api/v1/investigations/'+case['id'])
@@ -58,8 +75,15 @@ def smoke(command, workspace):
         assert pdf.startswith(b'%PDF-')
         (workspace / 'smoke-report.pdf').write_bytes(pdf)
         assert request(session, '/api/v1/history')['items']
+        # The analysis must survive the restart, not be rebuilt on demand.
+        assert len(request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']) == len(history)
         stop(process, session)
-        print(json.dumps({'result':'passed','investigation_id':case['id'],'status':case['status'],'pdf_bytes':len(pdf),'workspace':str(workspace)}))
+        print(json.dumps({'result':'passed','investigation_id':case['id'],'status':case['status'],
+                          'pdf_bytes':len(pdf),'historical_telemetry':telemetry,
+                          'execution_events':len(history),'artifacts':len(artifacts),
+                          'findings':len(findings),'timeline_entries':len(event_timeline),
+                          'sources':{source['name']: source['status'] for source in sources},
+                          'workspace':str(workspace)}))
     finally:
         if process.poll() is None: process.kill(); process.wait()
 

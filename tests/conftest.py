@@ -22,3 +22,43 @@ def client():
     from communication.server import app
     app.config.update(TESTING=True)
     return app.test_client()
+
+
+@pytest.fixture
+def stub_execution_history():
+    """A deterministic historical-execution result.
+
+    Shaped exactly like a real collection so the service, correlation and
+    report paths are exercised, but fixed so workstation tests do not depend on
+    whatever telemetry the machine running them happens to have.
+    """
+    from analysis.execution_history import finalize
+    from analysis.execution_model import AVAILABLE, CollectionWindow, NOT_ENABLED
+    from analysis import execution_linux
+    from tests.fixtures.telemetry import journal_runner
+
+    def build(**_kwargs):
+        window = CollectionWindow.resolve(168)
+        record, events = execution_linux.collect_journal(window, runner=journal_runner())
+        unavailable = execution_linux.collect_process_accounting(
+            window, paths=("/nonexistent/pacct",))[0]
+        assert record["status"] == AVAILABLE and unavailable["status"] == NOT_ENABLED
+        return finalize("Linux", window, [record, unavailable], events)
+
+    return build
+
+
+@pytest.fixture(autouse=True)
+def deterministic_execution_history(request, monkeypatch, stub_execution_history):
+    """Keep the real host's telemetry out of every test that does not ask for it.
+
+    Reading the live journal would make assertions depend on the machine and
+    would make each collection test as slow as a real forensic collection. Tests
+    that exercise the real collectors opt in with @pytest.mark.real_telemetry.
+    """
+    if request.node.get_closest_marker("real_telemetry"):
+        return
+    import backend.service
+    if hasattr(backend.service, "collect_execution_history"):
+        monkeypatch.setattr(backend.service, "collect_execution_history",
+                            lambda **kwargs: stub_execution_history(**kwargs))
