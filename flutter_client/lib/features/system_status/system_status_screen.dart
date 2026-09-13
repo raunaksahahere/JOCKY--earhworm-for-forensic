@@ -124,7 +124,13 @@ class SystemStatusScreen extends ConsumerWidget {
             FailureView(failure: status.failure!, onRetry: controller.refresh),
           ],
           const SizedBox(height: JockySpace.lg),
-          DataField(label: 'Endpoint', value: status.origin ?? AppConfig.defaultHost),
+          // Never a placeholder port: the engine binds an OS-assigned loopback
+          // port, so until it reports ready there is no endpoint to name.
+          DataField(
+            label: 'Endpoint',
+            value: status.origin ??
+                'not assigned yet — the engine binds an OS-chosen loopback port at startup',
+          ),
           DataField(
             label: 'Last healthy reply',
             child: status.lastHealthyAt == null

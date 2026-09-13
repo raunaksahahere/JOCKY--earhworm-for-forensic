@@ -53,10 +53,17 @@ class FakeProcess implements ManagedProcess {
 }
 
 class FakeRunner implements ProcessRunner {
-  FakeRunner({this.process, this.error});
+  FakeRunner({this.process, this.error, this.bootstrap = _readyBootstrap});
+
+  static const _readyBootstrap = {
+    'protocol': 1, 'event': 'ready', 'port': 5099, 'token': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'instance_id': 'test-instance',
+  };
 
   final FakeProcess? process;
   final Object? error;
+
+  /// Bootstrap record the fake engine writes to stdout, or null to write none.
+  final Map<String, Object?>? bootstrap;
 
   final List<({String executable, Map<String, String> environment, String? cwd})> starts = [];
 
@@ -69,9 +76,10 @@ class FakeRunner implements ProcessRunner {
   }) async {
     starts.add((executable: executable, environment: environment, cwd: workingDirectory));
     if (error != null) throw error!;
-    Timer(const Duration(milliseconds: 5), () => process!.stdoutController.add(utf8.encode('${jsonEncode({
-      'protocol': 1, 'event': 'ready', 'port': 5099, 'token': 'a' * 43, 'instance_id': 'test-instance',
-    })}\n')));
+    if (bootstrap != null) {
+      Timer(const Duration(milliseconds: 5),
+          () => process!.stdoutController.add(utf8.encode('${jsonEncode(bootstrap)}\n')));
+    }
     return process!;
   }
 }
@@ -110,6 +118,7 @@ void main() {
       );
 
   test('probe reports unavailable when nothing is listening', () async {
+    api.establishSession(5099, 'a' * 43, 'test-instance');
     transport.fail('/health', const SocketException('Connection refused'));
 
     final status = await supervisorWith().probe();
@@ -117,6 +126,39 @@ void main() {
     expect(status.phase, BackendPhase.unavailable);
     expect(status.failure!.kind, FailureKind.backendUnavailable);
     expect(status.managedByClient, isFalse);
+  });
+
+  test('probe without a bootstrap session never invents a connection error', () async {
+    // The port is assigned by the OS and announced at startup, so before a
+    // session there is nothing to probe. The periodic health poll used to
+    // report "No engine is listening on http://127.0.0.1:5000" here, which
+    // overwrote the real startup failure with a fabricated one.
+    var requested = false;
+    transport.handlers['/health'] = () {
+      requested = true;
+      throw const SocketException('refused');
+    };
+    final supervisor = supervisorWith();
+
+    final status = await supervisor.probe();
+
+    expect(requested, isFalse, reason: 'no endpoint is known yet');
+    expect(status.phase, BackendPhase.idle);
+    expect(status.failure, isNull);
+  });
+
+  test('the health poll does not overwrite a resolved startup failure', () async {
+    transport.fail('/health', const SocketException('refused'));
+    final supervisor = supervisorWith(locator: locatorFor(null));
+
+    final failed = await supervisor.start();
+    expect(failed.failure!.message, contains('was not found'));
+
+    // What the periodic poll in BackendController does, every interval.
+    final afterPoll = await supervisor.probe();
+
+    expect(afterPoll.failure!.message, contains('was not found'),
+        reason: 'the actionable cause must survive the readiness poll');
   });
 
   test('adopts only a session already authenticated by this client', () async {
@@ -143,6 +185,8 @@ void main() {
     expect(status.phase, BackendPhase.unavailable);
     expect(status.failure!.message, contains('was not found'));
     expect(status.failure!.detail, contains('/opt/jocky'));
+    expect(status.failure!.detail, contains('(missing)'),
+        reason: 'each rejected candidate is explained, not just listed');
   });
 
   test('start launches the engine with the bootstrap environment and waits for health',
@@ -173,6 +217,51 @@ void main() {
     expect(supervisor.diagnosticLog.join(), isNot(contains('a' * 43)));
     expect(runner.starts.single.environment['JOCKY_HOST'], '127.0.0.1');
     expect(probes, greaterThanOrEqualTo(3));
+    expect(status.origin, 'http://127.0.0.1:5099',
+        reason: 'the UI must show the assigned port, not the placeholder');
+  });
+
+  test('a startup_error is reported with the engine reason, not a timeout', () async {
+    transport.fail('/health', const SocketException('refused'));
+    final process = FakeProcess();
+    final supervisor = supervisorWith(
+      runner: FakeRunner(process: process, bootstrap: {
+        'protocol': 1,
+        'event': 'startup_error',
+        'instance_id': 'test-instance',
+        'error': {
+          'code': 'startup_failed',
+          'type': 'RuntimeError',
+          'message': 'Workspace is already in use',
+        },
+      }),
+      locator: locatorFor(Platform.resolvedExecutable),
+    );
+
+    final status = await supervisor.start();
+
+    expect(status.phase, BackendPhase.unavailable);
+    expect(status.failure!.message, contains('Workspace is already in use'));
+    expect(status.failure!.kind, isNot(FailureKind.timeout));
+  });
+
+  test('an exit during startup reports the engine stderr, not only a code', () async {
+    transport.fail('/health', const SocketException('refused'));
+    final process = FakeProcess();
+    final supervisor = supervisorWith(
+      runner: FakeRunner(process: process, bootstrap: null),
+      locator: locatorFor(Platform.resolvedExecutable),
+    );
+
+    final starting = supervisor.start();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    process.stderrController.add(utf8.encode('ImportError: libffi.so.8 missing\n'));
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    process.exitWith(1);
+    await starting;
+
+    expect(supervisor.status.exitCode, 1);
+    expect(supervisor.status.detail, contains('libffi.so.8'));
   });
 
   test('startup that never becomes healthy fails at the deadline', () async {
@@ -188,7 +277,10 @@ void main() {
   });
 
   test('an engine that answers /health but is not online is degraded, not ready', () async {
-    transport.respondJson('/health', {'status': 'starting', 'engine': 'initialising'});
+    api.establishSession(5099, 'a' * 43, 'test-instance');
+    transport.respondJson('/health', {
+      'status': 'starting', 'engine': 'initialising', 'instance_id': 'test-instance',
+    });
 
     final status = await supervisorWith().probe();
 

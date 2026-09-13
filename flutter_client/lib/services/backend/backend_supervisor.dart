@@ -148,47 +148,92 @@ class OsProcessRunner implements ProcessRunner {
   }
 }
 
-/// Locates the packaged engine executable next to the Flutter bundle.
+/// Locates the packaged engine executable relative to the running application.
 ///
-/// Linux: `<bundle>/data/flutter_assets/../backend/jocky-backend`
-/// alongside `bundle/backend/jocky-backend`.
-/// Windows: `<bundle>\backend\JOCKY-backend.exe`, matching the layout the
-/// existing Electron packaging produces.
+/// A release bundle carries the PyInstaller one-directory output at
+/// `<bundle>/backend/`, put there by the `install()` rule in
+/// `linux/CMakeLists.txt` and `windows/CMakeLists.txt` so that a plain
+/// `flutter build` always produces a runnable application — the Linux install
+/// step wipes the bundle on every build, so a copy made by a packaging script
+/// alone does not survive the next build.
+///
+/// Developer runs fall back to the repository's `backend-dist/`, found by
+/// walking up from the executable rather than by counting `../` segments: the
+/// build directory sits at a different depth on Linux than on Windows, and the
+/// hardcoded ascent this replaced pointed at a directory that never existed.
 class BackendLocator {
-  const BackendLocator({this.overridePath, this.resolveExecutableDir = _defaultDir});
+  const BackendLocator({
+    this.overridePath,
+    this.resolveExecutableDir = _defaultDir,
+    this.ancestorSearchDepth = 8,
+  });
 
   final String? overridePath;
   final String Function() resolveExecutableDir;
+
+  /// How far up from the executable the developer-layout search walks.
+  final int ancestorSearchDepth;
 
   static String _defaultDir() => File(Platform.resolvedExecutable).parent.path;
 
   static String get executableName =>
       Platform.isWindows ? 'JOCKY-backend.exe' : 'jocky-backend';
 
+  /// PyInstaller names its output directory after the executable, without the
+  /// Windows extension.
+  static String get distDirectoryName =>
+      Platform.isWindows ? 'JOCKY-backend' : 'jocky-backend';
+
+  static String _join(List<String> parts) => parts.join(Platform.pathSeparator);
+
   List<String> candidatePaths() {
     if (overridePath != null && overridePath!.isNotEmpty) return [overridePath!];
     final dir = resolveExecutableDir();
     final name = executableName;
-    return [
-      // Release bundle layouts.
-      '$dir${Platform.pathSeparator}backend${Platform.pathSeparator}$name',
-      '$dir${Platform.pathSeparator}data${Platform.pathSeparator}backend${Platform.pathSeparator}$name',
-      // Developer layout: PyInstaller output inside the repository.
-      '$dir${Platform.pathSeparator}..${Platform.pathSeparator}..${Platform.pathSeparator}..'
-          '${Platform.pathSeparator}..${Platform.pathSeparator}desktop'
-          '${Platform.pathSeparator}backend-dist${Platform.pathSeparator}$name',
+    final candidates = <String>[
+      // Release bundle: engine installed beside the Flutter executable.
+      _join([dir, 'backend', name]),
+      // The PyInstaller directory copied in whole rather than flattened.
+      _join([dir, 'backend', distDirectoryName, name]),
+      _join([dir, 'data', 'backend', name]),
     ];
+    var ancestor = dir;
+    for (var level = 0; level < ancestorSearchDepth; level++) {
+      final parent = Directory(ancestor).parent.path;
+      if (parent == ancestor) break;
+      ancestor = parent;
+      candidates.add(_join([ancestor, 'backend-dist', distDirectoryName, name]));
+    }
+    return candidates;
   }
 
-  /// Returns the first candidate that exists, or null. Existence is checked
-  /// through [exists] so tests do not need a real binary.
+  /// Returns the first candidate that is a runnable file, or null. Existence is
+  /// checked through [exists] so tests do not need a real binary.
   String? resolve({bool Function(String path)? exists}) {
-    final check = exists ?? (path) => File(path).existsSync();
+    final check = exists ?? isRunnable;
     for (final candidate in candidatePaths()) {
       if (check(candidate)) return candidate;
     }
     return null;
   }
+
+  /// A file that exists but carries no execute bit is not the engine: launching
+  /// it fails later with a much less obvious error, so reject it here where the
+  /// reason can still be reported.
+  static bool isRunnable(String path) {
+    final file = File(path);
+    if (!file.existsSync()) return false;
+    if (Platform.isWindows) return true;
+    return file.statSync().mode & 0x49 != 0;
+  }
+
+  /// Per-candidate verdict for the failure detail, so an operator is told why
+  /// each location was rejected instead of only that nothing was found.
+  String describeSearch() => candidatePaths().map((path) {
+        if (Directory(path).existsSync()) return '$path (is a directory)';
+        if (!File(path).existsSync()) return '$path (missing)';
+        return isRunnable(path) ? '$path (found)' : '$path (not executable)';
+      }).join('\n');
 }
 
 /// SQLite-backed local workstation contract; see contracts/CLIENT.md.
@@ -215,6 +260,15 @@ class BackendSupervisor {
   ManagedProcess? _process;
   BackendStatus _status = BackendStatus.unknown;
 
+  /// Set when the engine reports `startup_error` over the bootstrap channel.
+  /// Startup is then hopeless, so the readiness poll stops waiting for a health
+  /// reply that will never come and reports the engine's own reason instead.
+  String? _startupError;
+
+  /// Last few stderr lines, used to explain an exit during startup. A crashing
+  /// engine prints a traceback there and says nothing on the bootstrap channel.
+  final List<String> _stderrTail = [];
+
   Stream<BackendStatus> get statusStream => _controller.stream;
   BackendStatus get status => _status;
 
@@ -235,6 +289,13 @@ class BackendSupervisor {
   /// Used at startup so an engine started outside the app is adopted rather
   /// than duplicated.
   Future<BackendStatus> probe() async {
+    // The engine binds an OS-assigned port and announces it over the bootstrap
+    // channel together with a per-process token, so without a session there is
+    // no endpoint to probe and no credential to probe it with. Reporting a
+    // connection failure against the placeholder origin would be a fabricated
+    // error, and the periodic poll doing so is what buried the real startup
+    // failure behind "No engine is listening on http://127.0.0.1:5000".
+    if (!_api.hasSession) return _status;
     try {
       final health = await _api.health();
       if (!health.engineOnline) {
@@ -280,13 +341,17 @@ class BackendSupervisor {
       return _status;
     }
 
+    _startupError = null;
+    _stderrTail.clear();
     _emit(_status.copyWith(phase: BackendPhase.resolving, clearFailure: true));
     final executable = _locator.resolve();
     if (executable == null) {
       final failure = JockyFailure(
         kind: FailureKind.backendUnavailable,
-        message: 'The packaged forensic engine was not found next to this application.',
-        detail: 'searched: ${_locator.candidatePaths().join(', ')}',
+        message: 'The packaged forensic engine was not found next to this application. '
+            'This build is incomplete: the bundle should contain '
+            'backend/${BackendLocator.executableName}.',
+        detail: 'searched:\n${_locator.describeSearch()}',
       );
       _emit(_status.copyWith(
         phase: BackendPhase.unavailable,
@@ -296,11 +361,9 @@ class BackendSupervisor {
       return _status;
     }
 
-    _emit(_status.copyWith(
-      phase: BackendPhase.starting,
-      executablePath: executable,
-      origin: _api.config.displayOrigin,
-    ));
+    // No origin yet: the port is assigned by the OS at bind time and is only
+    // known once the engine announces it, so claiming one here would be a guess.
+    _emit(_status.copyWith(phase: BackendPhase.starting, executablePath: executable));
 
     try {
       final process = await _runner.start(
@@ -332,46 +395,69 @@ class BackendSupervisor {
   }
 
   void _attachDiagnostics(ManagedProcess process) {
-    void consume(Stream<List<int>> stream, String channel) {
-      stream.listen(
-        (chunk) {
-          final text = String.fromCharCodes(chunk).trimRight();
-          if (text.isNotEmpty) _log('[$channel] $text');
-        },
-        onError: (Object error) => _log('[$channel] stream error: $error'),
-        cancelOnError: false,
-      );
-    }
-
     process.stdout.transform(utf8.decoder).transform(const LineSplitter()).listen((line) {
       try {
         final message = jsonDecode(line) as Map<String, dynamic>;
         if (message['protocol'] != 1) throw const FormatException('Unsupported bootstrap protocol');
         if (message['event'] == 'ready') {
           _api.establishSession(int.parse('${message['port']}'), message['token'] as String, message['instance_id'] as String);
-          _log('[lifecycle] authenticated bootstrap received');
+          _log('[lifecycle] authenticated bootstrap received; engine listening on ${_api.config.displayOrigin}');
         } else if (message['event'] == 'startup_error') {
-          _log('[lifecycle] startup failed; check workspace permissions, storage and active sessions');
+          _startupError = _describeStartupError(message['error']);
+          _log('[lifecycle] startup_error: $_startupError');
         }
       } on Object {
         _log('[lifecycle] invalid bootstrap message');
       }
     });
-    consume(process.stderr, 'err');
+
+    process.stderr.transform(utf8.decoder).transform(const LineSplitter()).listen(
+      (line) {
+        if (line.trim().isEmpty) return;
+        _log('[err] $line');
+        _stderrTail.add(line);
+        if (_stderrTail.length > 12) _stderrTail.removeAt(0);
+      },
+      onError: (Object error) => _log('[err] stream error: $error'),
+      cancelOnError: false,
+    );
 
     unawaited(process.exitCode.then((code) {
       _log('[lifecycle] engine exited with code $code');
       _process = null;
-      if (_status.phase != BackendPhase.stopping) {
-        _emit(_status.copyWith(
-          phase: BackendPhase.stopped,
-          exitCode: code,
-          detail: 'The engine process exited unexpectedly with code $code.',
-        ));
-      } else {
+      // The token belonged to that process; presenting it to the next one would
+      // only produce 401s, and adopting a dead session would hide the exit.
+      _api.clearSession();
+      if (_status.phase == BackendPhase.stopping) {
         _emit(_status.copyWith(phase: BackendPhase.stopped, exitCode: code));
+        return;
       }
+      final reason = _startupError ??
+          (_stderrTail.isEmpty ? null : _stderrTail.last);
+      _emit(_status.copyWith(
+        phase: BackendPhase.stopped,
+        exitCode: code,
+        failure: JockyFailure(
+          kind: FailureKind.backendUnavailable,
+          message: 'The engine process exited unexpectedly with code $code.',
+          detail: reason,
+        ),
+        detail: reason == null
+            ? 'The engine process exited unexpectedly with code $code.'
+            : 'The engine process exited unexpectedly with code $code: $reason',
+      ));
     }));
+  }
+
+  /// The engine reports a structured error object; fall back to its raw form
+  /// rather than dropping a cause we cannot parse.
+  static String _describeStartupError(Object? error) {
+    if (error is Map) {
+      final message = error['message'];
+      final type = error['type'];
+      if (message != null) return type == null ? '$message' : '$message ($type)';
+    }
+    return error == null ? 'the engine reported a startup failure' : '$error';
   }
 
   /// Polls `/health` until the engine is ready or the startup deadline passes.
@@ -381,7 +467,25 @@ class BackendSupervisor {
 
     while (DateTime.now().isBefore(deadline)) {
       if (_status.phase == BackendPhase.stopped && _process == null && _status.managedByClient) {
-        break;
+        // The engine exited; the exit handler already recorded the code and the
+        // reason it printed. Falling through to the deadline below would
+        // replace that precise cause with a vague "did not become ready".
+        return _status;
+      }
+      // The engine said it cannot start. Waiting out the deadline would only
+      // replace its specific reason with a generic timeout.
+      if (_startupError != null) {
+        final failure = JockyFailure(
+          kind: FailureKind.backendUnavailable,
+          message: 'The forensic engine could not start: $_startupError',
+          detail: _stderrTail.isEmpty ? null : _stderrTail.join('\n'),
+        );
+        _emit(_status.copyWith(
+          phase: BackendPhase.unavailable,
+          failure: failure,
+          detail: failure.message,
+        ));
+        return _status;
       }
       try {
         if (!_api.hasSession) {
@@ -392,6 +496,9 @@ class BackendSupervisor {
         if (health.engineOnline) {
           _emit(_status.copyWith(
             phase: BackendPhase.ready,
+            // Only now is the endpoint known: the engine chose the port and
+            // announced it, so this is where the UI learns the real origin.
+            origin: _api.config.displayOrigin,
             lastHealthyAt: health.observedAt,
             detail: health.status,
             clearFailure: true,
@@ -413,6 +520,7 @@ class BackendSupervisor {
           kind: FailureKind.timeout,
           message: 'The engine did not become ready within '
               '${(timeout ?? _config.startupTimeout).inSeconds}s.',
+          detail: _stderrTail.isEmpty ? null : _stderrTail.join('\n'),
         );
     _emit(_status.copyWith(
       phase: _process == null ? BackendPhase.unavailable : BackendPhase.degraded,
@@ -459,6 +567,7 @@ class BackendSupervisor {
       return _status;
     }
     await stop();
+    _api.clearSession();
     _emit(BackendStatus(
       phase: BackendPhase.idle,
       executablePath: _status.executablePath,

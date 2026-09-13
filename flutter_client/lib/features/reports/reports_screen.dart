@@ -10,7 +10,6 @@ import '../../models/executions/execution_record.dart';
 import '../../state/providers.dart';
 import '../../widgets/data_grid.dart';
 import '../../widgets/empty_state.dart';
-import '../../widgets/failure_view.dart';
 import '../../widgets/mono_value.dart';
 import '../../widgets/panel.dart';
 import '../../widgets/status_chip.dart';

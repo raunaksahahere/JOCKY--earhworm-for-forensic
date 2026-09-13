@@ -31,6 +31,17 @@ class JockyApiClient {
     _token = token;
     _instance = instance;
   }
+
+  /// Forgets the bootstrap session. The token and instance id belong to one
+  /// engine process, so once that process is gone they must not be presented to
+  /// its replacement, and a dead session must not be mistaken for an adoptable
+  /// engine. The port is left in place purely as a diagnostic record of where
+  /// the last engine was listening.
+  void clearSession() {
+    _token = null;
+    _instance = null;
+    activeCaseId = null;
+  }
   final HttpTransport _transport;
 
   AppConfig get config => _config;

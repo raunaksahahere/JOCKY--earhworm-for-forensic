@@ -126,3 +126,37 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# === JOCKY forensic engine ===
+# BackendSupervisor resolves the engine at "<bundle>/backend/jocky-backend" relative to
+# the Flutter executable. Bundling it here rather than only in a packaging
+# script is deliberate: the install step above deletes the whole bundle
+# directory on every build, so a copy made afterwards by a script is silently
+# discarded by the next `flutter build`. So a plain
+# `flutter build linux --release` must produce a complete, runnable
+# application on its own.
+#
+# Set JOCKY_BACKEND_DIST to use a PyInstaller output from elsewhere. A missing
+# engine warns instead of failing, so `flutter run` and CI jobs that only build
+# the client still work.
+set(JOCKY_BACKEND_NAME "jocky-backend")
+set(JOCKY_BACKEND_EXE "jocky-backend")
+if(DEFINED ENV{JOCKY_BACKEND_DIST})
+  set(JOCKY_BACKEND_DIST "$ENV{JOCKY_BACKEND_DIST}")
+else()
+  set(JOCKY_BACKEND_DIST "${CMAKE_CURRENT_SOURCE_DIR}/../../backend-dist/${JOCKY_BACKEND_NAME}")
+endif()
+
+install(CODE "
+  set(engine \"${JOCKY_BACKEND_DIST}\")
+  if(EXISTS \"\${engine}/${JOCKY_BACKEND_EXE}\")
+    file(REMOVE_RECURSE \"${CMAKE_INSTALL_PREFIX}/backend\")
+    file(INSTALL \"\${engine}/\" DESTINATION \"${CMAKE_INSTALL_PREFIX}/backend\"
+         USE_SOURCE_PERMISSIONS)
+    message(STATUS \"JOCKY: bundled the forensic engine from \${engine}\")
+  else()
+    message(WARNING \"JOCKY: no forensic engine at \${engine}/${JOCKY_BACKEND_EXE}. \"
+                    \"This bundle cannot start an engine. Build it first: \"
+                    \"python scripts/build_backend.py\")
+  endif()
+  " COMPONENT Runtime)

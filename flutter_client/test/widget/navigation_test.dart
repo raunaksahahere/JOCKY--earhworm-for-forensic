@@ -13,6 +13,7 @@ import 'package:jocky_client/state/providers.dart';
 
 import '../support/fake_transport.dart';
 import '../support/fixtures.dart';
+import '../support/harness.dart';
 
 void main() {
   late FakeTransport transport;
@@ -37,6 +38,7 @@ void main() {
       ProviderScope(
         overrides: [
           httpTransportProvider.overrideWithValue(transport),
+          apiClientProvider.overrideWith((ref) => bootstrappedApi(transport)),
           settingsStoreProvider.overrideWithValue(InMemorySettingsStore()),
           recordStoreProvider.overrideWithValue(InMemoryRecordStore(records)),
           initialSettingsProvider.overrideWithValue(

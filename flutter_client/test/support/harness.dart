@@ -4,6 +4,7 @@ import 'package:jocky_client/core/config/app_config.dart';
 import 'package:jocky_client/core/errors/failure.dart';
 import 'package:jocky_client/core/theme/app_theme.dart';
 import 'package:jocky_client/models/settings/workstation_settings.dart';
+import 'package:jocky_client/services/api/jocky_api_client.dart';
 import 'package:jocky_client/services/file_selection/file_selection_service.dart';
 import 'package:jocky_client/services/storage/record_store.dart';
 import 'package:jocky_client/services/storage/settings_store.dart';
@@ -43,6 +44,22 @@ class FakeFileSelection implements FileSelectionService {
       saveLocation;
 }
 
+/// Identity of the engine the fake transport represents. The bootstrap token
+/// has to clear the client's 32-character minimum.
+const testInstanceId = 'test-instance';
+const testToken = 'test-bootstrap-token-0123456789abcdefghij';
+
+/// An API client that has already completed the bootstrap handshake.
+///
+/// Production code cannot reach the engine any other way: the engine binds an
+/// OS-assigned port and mints a per-process token, both announced over the
+/// bootstrap channel, and every route including `/health` requires that token.
+/// A test that exercises the readiness probe therefore has to start from a
+/// bootstrapped session, exactly as the running application does.
+JockyApiClient bootstrappedApi(FakeTransport transport) =>
+    JockyApiClient(config: testConfig, transport: transport)
+      ..establishSession(testConfig.port, testToken, testInstanceId);
+
 /// A provider scope wired entirely to fakes.
 ///
 /// Only the transport and the two stores are replaced; every controller,
@@ -59,6 +76,7 @@ ProviderContainer testContainer({
   final container = ProviderContainer(
     overrides: [
       httpTransportProvider.overrideWithValue(transport),
+      apiClientProvider.overrideWith((ref) => bootstrappedApi(transport)),
       settingsStoreProvider.overrideWithValue(InMemorySettingsStore()),
       recordStoreProvider.overrideWithValue(recordStore ?? InMemoryRecordStore(records)),
       initialSettingsProvider.overrideWithValue(
@@ -88,6 +106,7 @@ Widget harness(
   return ProviderScope(
     overrides: [
       httpTransportProvider.overrideWithValue(transport),
+      apiClientProvider.overrideWith((ref) => bootstrappedApi(transport)),
       settingsStoreProvider.overrideWithValue(InMemorySettingsStore()),
       recordStoreProvider.overrideWithValue(InMemoryRecordStore(records)),
       initialSettingsProvider.overrideWithValue(
