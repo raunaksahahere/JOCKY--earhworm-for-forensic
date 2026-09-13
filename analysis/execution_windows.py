@@ -37,9 +37,9 @@ from xml.etree import ElementTree
 
 from .execution_linux import run_command
 from .execution_model import (
-    AVAILABLE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED,
-    HISTORICAL_EVIDENCE, build_event, interpreter_for, redact_command_line,
-    source_record,
+    AVAILABLE, EXACT, EXECUTION_EVIDENCE, HISTORICAL_EVIDENCE, MODERATE,
+    NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED, STRONG, build_event,
+    describe_command, interpreter_for, redact_command_line, source_record,
 )
 
 MAX_EVENTS_PER_SOURCE = 2000
@@ -156,6 +156,12 @@ def collect_process_creation(window, *, runner=run_command, include_command_line
             source_record_id=_system_field(record, "EventRecordID"),
             timestamp=_system_field(record, "TimeCreated", "SystemTime"),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
+            command=describe_command(
+                command_line=command_line, executable=image, process_name=name,
+                source="Windows Security 4688", status=EXACT if command_line else None,
+                strength=STRONG if command_line else None),
             evidence_strength="Windows recorded this process being created.",
             provenance="Security event log, channel Security",
             observed={
@@ -211,6 +217,12 @@ def collect_sysmon(window, *, runner=run_command, include_command_lines=False):
             source_record_id=_system_field(record, "EventRecordID"),
             timestamp=data.get("UtcTime") or _system_field(record, "TimeCreated", "SystemTime"),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
+            command=describe_command(
+                command_line=command_line, executable=image, process_name=name,
+                source="Sysmon Event 1", status=EXACT if command_line else None,
+                strength=STRONG if command_line else None),
             evidence_strength="Sysmon recorded this process being created.",
             provenance=f"event log channel {channel}",
             observed={
@@ -259,6 +271,15 @@ def collect_powershell(window, *, runner=run_command):
             source_record_id=_system_field(record, "EventRecordID"),
             timestamp=_system_field(record, "TimeCreated", "SystemTime"),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
+            # A script block can arrive split across numbered records, so the
+            # text is the block as logged, not necessarily the whole script.
+            command=describe_command(
+                command_line=script, executable=data.get("Path"), process_name="powershell",
+                source="PowerShell 4104",
+                status=EXACT if data.get("MessageNumber") in (None, "1") else "PARTIAL",
+                strength=MODERATE),
             evidence_strength=(
                 "PowerShell compiled this script block for execution. Compilation is strong evidence the "
                 "block ran, but the record does not carry its outcome."
@@ -328,6 +349,8 @@ def collect_prefetch(window, *, directory=r"C:\Windows\Prefetch"):
             source_record_id=entry.name,
             timestamp=moment.isoformat(),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
             evidence_strength=(
                 "A prefetch file exists for this executable, so it has run on this volume at least once. "
                 "The timestamp is the prefetch file's modification time, which approximates the most "
@@ -435,6 +458,8 @@ def _userassist_values(registry, key, window, guid):
             source_record_id=f"{guid}:{name}",
             timestamp=stamp,
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
             evidence_strength=(
                 "The interactive user launched this program through the Windows shell. The record carries "
                 "a run count and the most recent launch time, not a per-run history."

@@ -32,8 +32,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .execution_model import (
-    AVAILABLE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED,
-    HISTORICAL_EVIDENCE, build_event, interpreter_for, redact_command_line,
+    AVAILABLE, COMMAND_HISTORY, EXACT, EXECUTION_EVIDENCE, HISTORICAL_EVIDENCE,
+    MODERATE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED, SESSION_EVENT,
+    STRONG, build_event, describe_command, interpreter_for, redact_command_line,
     source_record,
 )
 
@@ -169,6 +170,8 @@ def collect_journal(window, *, runner=run_command, include_command_lines=False, 
             timestamp=_iso(entry["first"]),
             last_seen=_iso(entry["last"]),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
             evidence_strength=(
                 "The executable was running when it wrote to the journal. The timestamp is when it "
                 "logged, not when it started, and absence of a record does not mean it did not run."
@@ -279,6 +282,13 @@ def collect_shell_history(window, *, home=None, cancel=None):
                 source_record_id=f"{path}:{index}",
                 timestamp=_iso(moment) if moment is not None else None,
                 classification=HISTORICAL_EVIDENCE,
+                evidence_kind=COMMAND_HISTORY,
+                # The command text is verbatim and complete, but the record
+                # says nothing about whether it ran.
+                execution_confirmed=False,
+                command=describe_command(
+                    command_line=masked, executable=None, process_name=program,
+                    source=f"{shell} history", status=EXACT, strength=STRONG),
                 evidence_strength=(
                     "A command was entered into a shell. This does not establish that it ran, that it "
                     "succeeded, or that it ran at this time."
@@ -379,6 +389,8 @@ def collect_audit_log(window, *, path="/var/log/audit/audit.log", cancel=None):
             source_record_id=f"audit:{stamp.group(3)}",
             timestamp=_iso(moment),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
             evidence_strength="The kernel audit subsystem recorded this executable being executed.",
             provenance=path,
             observed={
@@ -441,6 +453,8 @@ def collect_process_accounting(window, *, runner=run_command, paths=None, cancel
             source_record_id=f"pacct:{index}",
             timestamp=None,
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=EXECUTION_EVIDENCE,
+            execution_confirmed=True,
             evidence_strength="The kernel recorded this command exiting.",
             provenance=str(present[0]),
             observed={"process_name": parts[0], "user": parts[-4] if len(parts) >= 4 else None},
@@ -506,6 +520,8 @@ def collect_login_sessions(window, *, path="/var/log/wtmp", cancel=None):
             source_record_id=f"wtmp:{offset}",
             timestamp=_iso(seconds),
             classification=HISTORICAL_EVIDENCE,
+            evidence_kind=SESSION_EVENT,
+            execution_confirmed=False,
             evidence_strength=(
                 "A login session record. This establishes session context, not that any particular "
                 "program was executed."
