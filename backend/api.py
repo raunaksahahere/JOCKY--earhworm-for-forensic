@@ -132,7 +132,8 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
     # resolved table name, so an unknown alias falls through to that check.
     COLLECTIONS = {"timeline": "transitions", "artifacts": "artifact_observations",
                    "execution-events": "execution_events", "event-timeline": "timeline_events",
-                   "finding-evidence": "finding_evidence"}
+                   "finding-evidence": "finding_evidence",
+                   "collection-limitations": "collection_limitations"}
 
     @app.get("/api/v1/investigations/<case_id>/<collection>")
     def related(case_id, collection):

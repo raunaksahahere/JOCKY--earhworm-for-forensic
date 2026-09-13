@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 from analysis import hashing
+from analysis.activity import assign_references, build_activity
 from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
 from analysis.correlation import correlate
 from analysis.execution_history import collect_execution_history
@@ -110,14 +111,28 @@ class Workstation:
         # method straight from the URL.
         if table not in {"evidence", "findings", "reports", "transitions", "executions",
                          "execution_events", "artifact_observations", "timeline_events",
-                         "finding_evidence"}:
+                         "finding_evidence", "collection_limitations"}:
             raise ServiceError("Unknown collection")
         order = "timestamp" if table in {"execution_events", "timeline_events"} else "rowid"
         rows = self.store.rows(f"SELECT * FROM {table} WHERE investigation_id=? ORDER BY {order}", (case_id,))
+        # Which columns hold JSON depends on the table: `normalized_command` is
+        # a JSON structure on executions but plain searchable text on
+        # execution_events, so decoding by name alone corrupts the latter.
+        encoded = {"payload", "detail", "result", "error", "versions"}
+        if table == "executions":
+            encoded.add("normalized_command")
         for row in rows:
-            for key in ("payload", "normalized_command", "result", "error", "versions"):
+            for key in encoded:
                 if key in row and row[key] is not None:
-                    row[key] = json.loads(row[key])
+                    try:
+                        row[key] = json.loads(row[key])
+                    except (TypeError, ValueError):
+                        # A plain-text column that happens to share a name.
+                        pass
+            # SQLite has no boolean type; the client should not have to know
+            # that "execution was confirmed" arrives as 0 or 1.
+            if "execution_confirmed" in row:
+                row["execution_confirmed"] = bool(row["execution_confirmed"])
         return rows
 
     def transition(self, case_id, state, detail=None):
@@ -196,7 +211,8 @@ class Workstation:
             db.execute("INSERT INTO evidence VALUES (?,?,?,?,?,?,?,?)", (evidence_id, case_id, execution_id, action, source, now(), state, encode(result if not error else {"error": error, "classification": "UNAVAILABLE"})))
         return state, result, evidence_id
 
-    def _persist_analysis(self, case_id, execution, artifacts, correlation, processes, evidence_ids):
+    def _persist_analysis(self, case_id, execution, artifacts, correlation, processes, evidence_ids,
+                          activity):
         """Write execution events, artifacts, findings and the timeline.
 
         One transaction: an investigation must never be left holding findings
@@ -208,33 +224,59 @@ class Workstation:
                                   findings=correlation["findings"],
                                   transitions=self.related(case_id, "transitions"))
         with self.store.transaction() as db:
+            triage_by_reference = {
+                record["reference"]: group["classification"]["category"]
+                for group in activity["groups"] for record in group["records"] if record.get("reference")
+            }
             for event in execution.get("events", []) or []:
                 db.execute(
-                    "INSERT INTO execution_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO execution_events"
+                    " (id,investigation_id,evidence_id,source,source_record_id,timestamp,last_seen,"
+                    "  process_name,executable,pid,parent_pid,account,classification,collection_status,"
+                    "  payload,evidence_kind,full_command_line,normalized_command,"
+                    "  command_reconstruction_status,command_evidence_strength,execution_confirmed,"
+                    "  reference,triage)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier(), case_id, execution_evidence, event.get("source"),
                      event.get("source_record_id"), event.get("timestamp"), event.get("last_seen"),
                      event.get("process_name"), event.get("executable"), event.get("pid"),
                      event.get("parent_pid"), str(event.get("user")) if event.get("user") is not None else None,
-                     event.get("classification"), event.get("collection_status"), encode(event)))
+                     event.get("classification"), event.get("collection_status"), encode(event),
+                     event.get("evidence_kind"), event.get("full_command_line"),
+                     event.get("normalized_command"), event.get("command_reconstruction_status"),
+                     event.get("command_evidence_strength"), 1 if event.get("execution_confirmed") else 0,
+                     event.get("reference"), triage_by_reference.get(event.get("reference"))))
             for record in artifacts.get("artifacts", []) or []:
                 db.execute(
-                    "INSERT INTO artifact_observations VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO artifact_observations"
+                    " (id,investigation_id,evidence_id,path,filename,extension,size_bytes,modified,"
+                    "  hash,collection_status,source,payload,reference)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier(), case_id, artifact_evidence, record["path"], record["filename"],
                      record.get("extension"), record.get("size_bytes"), record.get("modified"),
                      record.get("hash"), record["collection_status"], record.get("source", "unknown"),
-                     encode(record)))
-            for finding in correlation["findings"]:
+                     encode(record), record.get("reference")))
+            for index, finding in enumerate(correlation["findings"], start=1):
                 finding_id = identifier()
+                finding["reference"] = f"F-{index:04d}"
                 db.execute(
-                    "INSERT INTO findings (id,investigation_id,evidence_id,category,severity,title,explanation,classification,confidence,detail) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO findings (id,investigation_id,evidence_id,category,severity,title,explanation,classification,confidence,detail,triage,why,reference) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (finding_id, case_id, self._finding_evidence_id(finding, evidence_ids), finding["category"],
                      finding["severity"], finding["title"], finding["explanation"], finding["classification"],
-                     finding["confidence"], encode(finding.get("evidence_references", []))))
+                     finding["confidence"], encode(finding.get("evidence_references", [])),
+                     finding.get("triage"), finding.get("why"), finding["reference"]))
                 for reference in finding.get("evidence_references", []):
                     db.execute(
                         "INSERT INTO finding_evidence (finding_id,investigation_id,kind,reference,detail) VALUES (?,?,?,?,?)",
                         (finding_id, case_id, reference.get("kind", "unknown"), str(reference.get("id")),
                          encode({k: v for k, v in reference.items() if k not in ("kind", "id")})))
+            for limitation in correlation.get("limitations", []) or []:
+                db.execute(
+                    "INSERT INTO collection_limitations VALUES (?,?,?,?,?,?,?,?,?)",
+                    (identifier(), case_id, self._finding_evidence_id(limitation, evidence_ids),
+                     limitation["category"], limitation["severity"], limitation["title"],
+                     limitation["explanation"], limitation["classification"],
+                     encode(limitation.get("evidence_references", []))))
             for entry in (timeline["entries"] + timeline["undated_entries"])[:MAX_PERSISTED_TIMELINE]:
                 db.execute(
                     "INSERT INTO timeline_events (investigation_id,kind,timestamp,title,source,classification,payload) VALUES (?,?,?,?,?,?,?)",
@@ -334,8 +376,15 @@ class Workstation:
 
             self.transition(case_id, "analyzing")
             evidence_ids = {action: evidence_id for action, _result, evidence_id in results}
+            # Short, stable identifiers first: findings cite them, the report
+            # prints them, and an investigator uses them to find the record.
+            assign_references(execution.get("events", []) or [],
+                              artifacts=artifacts.get("artifacts", []) or [])
             correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
-            self._persist_analysis(case_id, execution, artifacts, correlation, processes, evidence_ids)
+            activity = build_activity(execution.get("events", []) or [],
+                                      artifacts=artifacts.get("artifacts", []) or [])
+            self._persist_analysis(case_id, execution, artifacts, correlation, processes,
+                                   evidence_ids, activity)
 
             self.transition(case_id, "finalizing")
             status = "cancelled" if event.is_set() else "partially_completed" if failures or incomplete else "completed"
@@ -364,15 +413,40 @@ class Workstation:
         artifacts = [dict(row["payload"]) if isinstance(row["payload"], dict) else {}
                      for row in self.related(case_id, "artifact_observations")]
         findings = self.related(case_id, "findings")
+        limitations = self.related(case_id, "collection_limitations")
         timeline = self.related(case_id, "timeline_events")
         sources = execution.get("sources", []) or []
         available = [source for source in sources if source["status"] == "AVAILABLE"]
 
+        # Events come from the normalized table, not the evidence blob: the blob
+        # was written before stable references were assigned, so reading it
+        # would produce a report whose entries cite no identifiers.
+        events = [dict(row["payload"], reference=row.get("reference"))
+                  for row in self.related(case_id, "execution_events")
+                  if isinstance(row.get("payload"), dict)] or (execution.get("events", []) or [])
+        activity = build_activity(events, artifacts=artifacts)
+        counts = activity["counts_by_kind"]
+
         return {"report_id": identifier(), "schema_version": REPORT_SCHEMA_VERSION, "created_at": now(),
                 "investigation_id": case_id, "investigation": case, "status": status or case["status"],
                 "versions": versions(), "device": case["device"],
-                "summary": self._summary(case, execution, processes, artifacts, findings, available, sources),
+                "summary": self._summary(case, execution, processes, artifacts, findings,
+                                         limitations, available, sources, counts, activity),
                 "collection_window": execution.get("window"),
+                # Separately named totals. One blurred "events" number invited
+                # the reader to treat typed commands as confirmed execution.
+                "record_counts": {
+                    **counts,
+                    "distinct_activity": activity["group_count"],
+                    "current_processes": (processes.get("statistics", {}) or {}).get("processes_recorded", 0),
+                    "artifacts": len(artifacts),
+                    "findings": len(findings),
+                    "collection_limitations": len(limitations),
+                    "execution_confirmed_records": sum(
+                        group["occurrences"] for group in activity["groups"] if group["execution_confirmed"]),
+                },
+                "triage": activity["triage"],
+                "activity": activity,
                 "historical_execution": {
                     "telemetry_available": bool(available),
                     "platform": execution.get("platform"),
@@ -380,13 +454,14 @@ class Workstation:
                     "event_count": execution.get("event_count", 0),
                     "undated_event_count": execution.get("undated_event_count", 0),
                     "truncated": execution.get("truncated", False),
-                    "events": execution.get("events", []),
+                    "events": events,
                     "limits": execution.get("limits", {}),
                     "statistics": execution.get("statistics", {}),
                 },
                 "artifacts": artifacts,
                 "event_timeline": timeline,
                 "findings": findings,
+                "collection_limitations": limitations,
                 "evidence": self.related(case_id, "evidence"), "executions": self.related(case_id, "executions"),
                 "timeline": self.related(case_id, "transitions"),
                 "current_process_snapshot": {
@@ -396,8 +471,7 @@ class Workstation:
                     "truncated": processes.get("truncated", False),
                 },
                 # The full per-process listing is bulky and rarely the point of
-                # the report, so it sits in an appendix rather than dominating
-                # the body. Nothing is dropped.
+                # the report, so it sits in an appendix. Nothing is dropped.
                 "appendix_process_listing": processes.get("processes", []),
                 "unavailable_telemetry": [
                     {"source": source["name"], "status": source["status"], "detail": source["detail"],
@@ -410,20 +484,44 @@ class Workstation:
                                "correlation": "JOCKY rule-based correlation; every finding names its evidence"}}
 
     @staticmethod
-    def _summary(case, execution, processes, artifacts, findings, available, sources):
-        """A plain statement of what this investigation can and cannot support."""
-        if available:
-            basis = ("Historical execution evidence was collected from "
-                     + ", ".join(source["name"] for source in available) + ".")
-        else:
-            basis = ("No historical execution telemetry was available on this host, so this investigation "
-                     "rests on current observation only and cannot establish what ran before collection.")
-        return (f"Authorized local defensive collection for '{case['title']}'. {basis} "
-                f"{execution.get('event_count', 0)} historical execution records, "
-                f"{processes.get('statistics', {}).get('processes_recorded', 0)} current processes, "
-                f"{len(artifacts)} artifacts and {len(findings)} findings. "
-                f"{len([s for s in sources if s['status'] != 'AVAILABLE'])} telemetry sources were unavailable; "
-                "they are listed in full below. Observations are limited to the sources named in this report.")
+    def _summary(case, execution, processes, artifacts, findings, limitations, available, sources,
+                 counts, activity):
+        """A short account an investigator can act on, in accurate terms.
+
+        Each figure is named for what it actually is. Calling typed commands and
+        execution records one number would invite exactly the confusion this
+        report exists to prevent.
+        """
+        triage = activity["triage"]["counts"]
+        basis = (("Historical execution evidence was collected from "
+                  + ", ".join(source["name"] for source in available) + ".")
+                 if available else
+                 ("No historical execution telemetry was available on this host, so this "
+                  "investigation rests on current observation only and cannot establish what ran "
+                  "before collection started."))
+        confirmed = sum(group["occurrences"] for group in activity["groups"]
+                        if group["execution_confirmed"])
+        return (
+            f"Authorized local defensive collection for '{case['title']}'. {basis} "
+            f"The evidence holds {counts['execution_source_records']} execution-source records, "
+            f"{counts['command_history_records']} command-history records and "
+            f"{counts['session_records']} session records, covering "
+            f"{activity['group_count']} distinct activities. "
+            f"{confirmed} records come from a source that establishes execution; the remainder "
+            "record what was entered or who was logged in, which is not the same thing. "
+            f"Triage identified {triage.get('POTENTIALLY_HARMFUL', 0)} records worth attention, "
+            f"{triage.get('NEEDS_REVIEW', 0)} that need an investigator's judgement and "
+            f"{triage.get('NOT_HARMFUL_ON_AVAILABLE_EVIDENCE', 0)} that show nothing of concern in "
+            "what was collected. "
+            f"{len(findings)} findings were raised against "
+            f"{(processes.get('statistics', {}) or {}).get('processes_recorded', 0)} current processes "
+            f"and {len(artifacts)} artifacts. "
+            f"{len(limitations)} collection limitations are recorded separately, including "
+            f"{len([s for s in sources if s['status'] != 'AVAILABLE'])} telemetry sources that could "
+            "not be read. "
+            "Triage categories are not verdicts: 'not harmful based on available evidence' means "
+            "nothing in what was collected stood out, not that the activity was safe."
+        )
 
     @staticmethod
     def _limitations(execution, processes, artifacts, available, sources):

@@ -61,6 +61,29 @@ MIGRATIONS = {1: (
     # collector that records one writes it.
     "ALTER TABLE findings ADD COLUMN confidence TEXT NOT NULL DEFAULT 'unqualified'",
     "ALTER TABLE findings ADD COLUMN detail TEXT",
+), 3: (
+    # Investigator-facing columns. The full command line is stored as its own
+    # column so it can be searched and displayed without unpacking the payload,
+    # and `reference` is the short stable identifier a report cites.
+    "ALTER TABLE execution_events ADD COLUMN evidence_kind TEXT NOT NULL DEFAULT 'EXECUTION_EVIDENCE'",
+    "ALTER TABLE execution_events ADD COLUMN full_command_line TEXT",
+    "ALTER TABLE execution_events ADD COLUMN normalized_command TEXT",
+    "ALTER TABLE execution_events ADD COLUMN command_reconstruction_status TEXT",
+    "ALTER TABLE execution_events ADD COLUMN command_evidence_strength TEXT",
+    "ALTER TABLE execution_events ADD COLUMN execution_confirmed INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE execution_events ADD COLUMN reference TEXT",
+    "ALTER TABLE execution_events ADD COLUMN triage TEXT",
+    "CREATE INDEX execution_event_command ON execution_events(full_command_line)",
+    "CREATE INDEX execution_event_reference ON execution_events(investigation_id,reference)",
+    "ALTER TABLE artifact_observations ADD COLUMN reference TEXT",
+    "ALTER TABLE findings ADD COLUMN triage TEXT",
+    "ALTER TABLE findings ADD COLUMN why TEXT",
+    "ALTER TABLE findings ADD COLUMN reference TEXT",
+    # Collection limitations were previously written as findings. They are a
+    # separate kind of statement and now live in their own table, so an
+    # investigator's finding list is not padded with missing-telemetry notes.
+    "CREATE TABLE collection_limitations (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), evidence_id TEXT REFERENCES evidence(id), category TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, explanation TEXT NOT NULL, classification TEXT NOT NULL, detail TEXT)",
+    "CREATE INDEX limitation_case ON collection_limitations(investigation_id)",
 )}
 
 
