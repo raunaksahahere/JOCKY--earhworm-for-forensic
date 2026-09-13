@@ -1,0 +1,860 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "JOCKY Local Workstation API",
+    "version": "1.0.0",
+    "description": "CLIENT.md specifies operation models, lifecycle and limits. Bootstrap provides the dynamic loopback server URL."
+  },
+  "security": [
+    {
+      "launchToken": [],
+      "instance": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "launchToken": {
+        "type": "http",
+        "scheme": "bearer"
+      },
+      "instance": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Jocky-Instance"
+      }
+    }
+  },
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "summary": "GET /health",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "summary": "GET /status",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/capabilities": {
+      "get": {
+        "summary": "GET /capabilities",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/commands": {
+      "get": {
+        "summary": "GET /commands",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/command": {
+      "post": {
+        "summary": "POST /command",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/investigations": {
+      "get": {
+        "summary": "GET /investigations",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      },
+      "post": {
+        "summary": "POST /investigations",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/investigations/{id}": {
+      "get": {
+        "summary": "GET /investigations/{id}",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/collect": {
+      "post": {
+        "summary": "POST /investigations/{id}/collect",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/investigations/{id}/cancel": {
+      "post": {
+        "summary": "POST /investigations/{id}/cancel",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/investigations/{id}/timeline": {
+      "get": {
+        "summary": "GET /investigations/{id}/timeline",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/evidence": {
+      "get": {
+        "summary": "GET /investigations/{id}/evidence",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/findings": {
+      "get": {
+        "summary": "GET /investigations/{id}/findings",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/executions": {
+      "get": {
+        "summary": "GET /investigations/{id}/executions",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/reports": {
+      "get": {
+        "summary": "GET /investigations/{id}/reports",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/investigations/{id}/report/export": {
+      "post": {
+        "summary": "POST /investigations/{id}/report/export",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reports/{report_id}": {
+      "get": {
+        "summary": "GET /reports/{report_id}",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "parameters": [
+          {
+            "name": "report_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/v1/history": {
+      "get": {
+        "summary": "GET /history",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/workstation": {
+      "get": {
+        "summary": "GET /workstation",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        }
+      },
+      "post": {
+        "summary": "POST /workstation",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/backup": {
+      "post": {
+        "summary": "POST /storage/backup",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/import-ledger": {
+      "post": {
+        "summary": "POST /storage/import-ledger",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/storage/import-workstation": {
+      "post": {
+        "summary": "POST /storage/import-workstation",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/evidence/export-encrypted": {
+      "post": {
+        "summary": "POST /evidence/export-encrypted",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/shutdown": {
+      "post": {
+        "summary": "POST /shutdown",
+        "responses": {
+          "200": {
+            "description": "JSON or export response; see CLIENT.md"
+          },
+          "201": {
+            "description": "Created"
+          },
+          "202": {
+            "description": "Accepted"
+          },
+          "400": {
+            "description": "Validation failure"
+          },
+          "401": {
+            "description": "Invalid local session"
+          },
+          "503": {
+            "description": "Storage or service unavailable"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

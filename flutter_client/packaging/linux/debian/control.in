@@ -1,0 +1,14 @@
+Package: jocky-workstation
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Depends: libgtk-3-0, libglib2.0-0
+Maintainer: JOCKY
+Description: JOCKY forensic workstation
+ Desktop client for the JOCKY defensive digital-forensics engine. Submits
+ observation commands to a local engine over loopback HTTP and renders the
+ engine's structured results and reports.
+ .
+ The client performs no forensic analysis of its own: parsing, validation,
+ collection and report generation all belong to the engine.

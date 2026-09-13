@@ -1,0 +1,1 @@
+{"protocol":1,"event":"ready","instance_id":"fixture-instance-not-a-real-session","host":"127.0.0.1","port":49152,"token":"EXAMPLE_ONLY_GENERATED_PER_LAUNCH_DO_NOT_USE","versions":{"application":"0.2.0","backend":"0.2.0","api":1,"command_schema":1,"report_schema":2,"database_schema":1},"storage_mode":"portable"}

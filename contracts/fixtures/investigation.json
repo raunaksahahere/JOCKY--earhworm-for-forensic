@@ -1,0 +1,1 @@
+{"id":"fixture-case","title":"Example investigation","created_at":"2026-09-13T00:00:00+00:00","started_at":null,"completed_at":null,"status":"created","device":{},"metadata":{"examiner":"Example investigator","notes":"","reference":"Example","workstation":{"hostname":"example-host","platform":"Linux"}},"evidence_count":0,"finding_count":0}

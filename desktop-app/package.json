@@ -1,0 +1,17 @@
+{
+  "name": "jocky-desktop",
+  "version": "1.0.0",
+  "description": "JOCKY Digital Forensics Investigation Platform for Windows",
+  "main": "main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist:installer": "electron-builder --config electron-builder.nsis.yml",
+    "dist:portable": "electron-builder --config electron-builder.portable.yml",
+    "dist": "npm run dist:installer && npm run dist:portable"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  }
+}

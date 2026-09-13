@@ -1,0 +1,4 @@
+This directory is used at runtime to store hash_ledger.json (JOCKY's local
+record of previously computed file hashes, used to detect whether a file
+has changed since it was last hashed). It's created automatically if
+missing; this file just keeps the empty directory in version control.

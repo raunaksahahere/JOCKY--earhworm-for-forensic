@@ -1,0 +1,22 @@
+appId: com.jocky.forensics
+productName: JOCKY
+directories:
+  output: release
+files:
+  - main.cjs
+  - preload.cjs
+  - package.json
+extraResources:
+  - from: ../dashboard/dist
+    to: dashboard
+  - from: ../desktop/backend-dist/JOCKY-backend
+    to: backend
+win:
+  target: nsis
+  artifactName: JOCKY-Setup-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: JOCKY

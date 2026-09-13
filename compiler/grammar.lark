@@ -1,0 +1,26 @@
+start: command
+
+?command: hash_command
+        | encrypt_command
+        | system_command
+        | list_command
+        | processes_command
+        | search_file_command
+
+hash_command: "HASH" _WS "FILE" _WS path
+
+encrypt_command: "ENCRYPT" _WS "FILE" _WS path
+
+list_command: "LIST" _WS "FILES" _WS path
+
+system_command: "SYSTEM" _WS "INFO"
+
+processes_command: "PROCESSES"
+
+search_file_command: "SEARCH" _WS "FILE" _WS path _WS "IN" _WS path
+
+path: DOUBLE_QUOTED | SINGLE_QUOTED | PATH
+DOUBLE_QUOTED: /"[^"\r\n]*"/
+SINGLE_QUOTED: /'[^'\r\n]*'/
+PATH: /[^\s"']+/
+_WS: /[ \t]+/

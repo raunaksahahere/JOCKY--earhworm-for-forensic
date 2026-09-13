@@ -1,0 +1,150 @@
+JOCKY — WINDOWS PACKAGE BUILD GUIDE
+
+1. BUILD MACHINE REQUIREMENTS
+- Python 3.x
+- Node.js (includes npm)
+- Git is optional
+- Python and Node.js are needed only on the machine used to BUILD JOCKY.
+
+Check in PowerShell:
+    python --version
+    node --version
+    npm --version
+
+2. PROJECT STRUCTURE
+Important folders:
+    JOCKY/
+    ├── dashboard/       React/Vite frontend
+    ├── communication/   Flask API
+    ├── compiler/        Command parser and grammar
+    ├── analysis/        Forensic analysis modules
+    ├── reports/         Report generation
+    ├── desktop/         Windows backend build scripts
+    └── desktop-app/     Electron packaging
+
+3. START THE FULL BUILD
+Open PowerShell in the JOCKY project root and run:
+
+    .\desktop\build_windows.bat
+
+The script performs:
+    [1/5] Python build dependencies
+    [2/5] Production React/Vite frontend
+    [3/5] PyInstaller Flask backend
+    [4/5] Electron dependencies
+    [5/5] Windows packaging
+
+4. FRONTEND BUILD
+The dashboard is built with Vite.
+The production files are created in:
+
+    dashboard\dist\
+
+The build should contain:
+    dashboard\dist\index.html
+
+5. BACKEND BUILD
+PyInstaller freezes the Flask backend into a Windows executable.
+The expected output is:
+
+    desktop\backend-dist\JOCKY-backend\JOCKY-backend.exe
+
+The compiler grammar is included automatically from:
+
+    compiler\grammar.lark
+
+The current fixed build script resolves this file from the JOCKY project root.
+
+6. ELECTRON PACKAGING
+Electron provides the Windows desktop shell.
+It packages:
+- The production React frontend
+- The frozen Python/Flask backend
+- Required application files
+
+Electron then creates the final Windows packages.
+
+7. FINAL OUTPUT
+After a successful build, open:
+
+    desktop-app\release\
+
+Expected files are similar to:
+
+    JOCKY-Setup-1.0.0-x64.exe
+    JOCKY-Portable-1.0.0-x64.exe
+
+The exact filename may change with the project version or architecture.
+
+8. WHICH FILE TO USE
+Installer:
+    JOCKY-Setup-...exe
+Best for normal installation and creating Windows shortcuts.
+
+Portable:
+    JOCKY-Portable-...exe
+Useful for demonstrations and portable testing.
+
+9. TEST THE PACKAGE
+Run the generated installer or portable EXE.
+Check that:
+- The JOCKY dashboard opens.
+- The local backend starts automatically.
+- The interface loads without a development server.
+- Safe forensic commands return results.
+
+Example commands:
+    SYSTEM INFO
+    PROCESSES
+    LIST FILES <path>
+    SEARCH FILE <name> IN <folder>
+    HASH FILE <path>
+
+10. TROUBLESHOOTING WITHOUT REINSTALLING EVERYTHING
+
+Do not reinstall all dependencies just because the build fails.
+Read the last error shown in PowerShell.
+
+If you see a grammar.lark error, verify:
+    compiler\grammar.lark
+
+The fixed build should use the project-root grammar file, not:
+    desktop\.pyinstaller\compiler\grammar.lark
+
+If the frontend build fails, check:
+    dashboard\dist\index.html
+
+If the backend build fails, check:
+    desktop\backend-dist\JOCKY-backend\JOCKY-backend.exe
+
+If Electron packaging fails, check:
+    desktop-app\release\
+
+11. FINAL DEPLOYMENT RESULT
+The packaged JOCKY application contains:
+- Electron/Chromium desktop shell
+- Production React frontend
+- Frozen Python/Flask backend
+- Required parser/grammar and application files
+
+Therefore the TARGET Windows PC does NOT need:
+- Python
+- Node.js
+- npm
+- Vite
+- Flask development server
+- Source-code build tools
+
+12. BUILD FLOW
+
+    JOCKY source
+        ↓
+    React/Vite production build
+        ↓
+    PyInstaller backend
+        ↓
+    Electron packages frontend + backend
+        ↓
+    Windows Installer + Portable EXE
+
+For the SIH/demo, build once on the development machine, test the generated package, and distribute the installer or portable EXE.

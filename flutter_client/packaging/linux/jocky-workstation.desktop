@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=JOCKY Forensic Workstation
+Comment=Observe, hash, verify and report on digital evidence
+Exec=/opt/jocky-workstation/jocky_client
+Icon=jocky-workstation
+Terminal=false
+Categories=Utility;Security;
+Keywords=forensics;evidence;hash;integrity;
