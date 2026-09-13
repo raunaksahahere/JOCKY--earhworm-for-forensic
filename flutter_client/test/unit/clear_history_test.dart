@@ -55,19 +55,20 @@ void main() {
     );
   });
 
-  test('retained evidence is reported, not presented as a failure', () async {
+  test('the whole log is cleared and preserved evidence is reported', () async {
     transport.respondJson('/api/v1/history/clear', {
-      'deleted': 2,
-      'retained': 5,
-      'retained_reason': 'Executions belonging to an investigation are forensic records.',
+      'deleted': 6,
+      'retained': 0,
+      'preserved': {'evidence': 12, 'findings': 4, 'investigation_reports': 1},
+      'preserved_reason': 'Only the execution log was removed.',
     });
 
     final clearance = await store.clearExecutionHistory();
 
-    expect(clearance.retained, 5);
-    expect(clearance.summary, contains('2 execution records deleted'));
-    expect(clearance.summary, contains('5 kept'));
-    expect(clearance.summary, contains('forensic records'));
+    expect(clearance.deleted, 6);
+    expect(clearance.retained, 0, reason: 'every row in the list goes');
+    expect(clearance.summary, contains('6 execution records deleted'));
+    expect(clearance.summary, contains('12 evidence records kept'));
   });
 
   test('a clearance that removed nothing still says so', () async {

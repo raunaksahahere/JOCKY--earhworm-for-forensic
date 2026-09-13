@@ -358,11 +358,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         backgroundColor: JockyColors.surface,
         title: const Text('Clear execution history?', style: TextStyle(fontSize: 15)),
         content: const Text(
-          'This deletes the Command Center history — commands submitted outside an '
-          'investigation, and the reports issued for them. They cannot be recovered.\n\n'
-          'Executions that belong to an investigation are evidence and are kept, as are the '
-          'hash records used to tell whether a file changed between sightings. The engine '
-          'records that this clearance happened.',
+          'This deletes every row in this list — commands you submitted and the collection '
+          'steps investigations ran — along with the reports issued for them. They cannot be '
+          'recovered.\n\n'
+          'Your evidence is kept: observations, findings, artifacts, execution events and each '
+          'investigation\'s own report all survive, and reports can still be exported. The hash '
+          'records that tell you whether a file changed between sightings are kept too.\n\n'
+          'What is lost is the job log: when each step ran, its state, and which evidence row '
+          'came from which step. The engine records that this clearance happened.',
           style: TextStyle(fontSize: 12.5, height: 1.5),
         ),
         actions: [

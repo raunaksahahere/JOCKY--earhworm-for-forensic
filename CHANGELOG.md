@@ -2,6 +2,29 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.5.1 — 2026-09-13
+
+### Changed
+
+- **Clear history now clears the whole list.** It previously kept every
+  execution belonging to an investigation, so on a workstation whose history was
+  all collection steps the button appeared to do nothing at all. It now deletes
+  every row the History screen shows — commands submitted directly and the
+  collection steps investigations ran — along with the reports issued for them.
+
+  The evidence is not touched. Observations, findings, artifacts, execution
+  events, the merged timeline and each investigation's own report all survive;
+  their link to the deleted execution is cleared rather than the rows being
+  removed, so an investigation still holds what was observed and its report
+  still exports. The hash ledger survives for the same reason: it spans
+  investigations and is what tells an investigator whether a file changed
+  between sightings.
+
+  What is lost is the job log — when each step ran, its state, and which
+  evidence row came from which step. The dialog says so, the result reports how
+  many evidence records were kept, and the clearance is recorded in the
+  workspace.
+
 ## 0.5.0 — 2026-09-13
 
 Investigator usability. The evidence was already being collected correctly; it

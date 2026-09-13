@@ -114,41 +114,52 @@ def import_legacy(service, path):
 
 
 def clear_history(service):
-    """Delete ad-hoc command history, never investigation evidence.
+    """Delete the whole execution log: every row the History screen lists.
 
-    An execution attached to an investigation is part of that investigation's
-    evidence chain: evidence rows reference it, and a report was issued from it.
-    Those are retained unconditionally, whatever the operator asks, because a
-    forensic record must not be removable by a convenience button.
+    This clears the record of the commands and collection steps this
+    workstation ran, including the steps belonging to investigations. That is
+    the operator's decision to make, and the button says plainly what it does.
 
-    What is removed is the Command Center history: executions belonging to no
-    investigation, and the per-command reports issued for them. Hash
-    observations survive with their execution link cleared, so the integrity
-    ledger keeps saying whether a file changed between sightings.
+    What it deliberately does not do is cascade into the evidence. Observations,
+    findings, artifacts, execution events, the merged timeline and each
+    investigation's own report all survive; their `execution_id` link is cleared
+    rather than the rows being deleted, so an investigation still holds what was
+    observed and can still export its report. The hash ledger survives for the
+    same reason: it is what tells an investigator whether a file changed between
+    sightings, and it spans investigations.
 
-    The deletion is itself recorded. Unrecorded destruction has no place in a
+    What is lost is the job log: when each step ran, how long it took, its state,
+    and which evidence row came from which step. Per-command reports issued for
+    Command Center runs go with their executions, since nothing would reference
+    them afterwards.
+
+    The clearance is itself recorded. Unrecorded destruction has no place in a
     forensic workstation.
     """
     with service.store.transaction() as db:
-        removable = [row[0] for row in db.execute(
-            "SELECT e.id FROM executions e"
-            " WHERE e.investigation_id IS NULL"
-            "   AND NOT EXISTS (SELECT 1 FROM evidence v WHERE v.execution_id = e.id)")]
-        retained = db.execute(
-            "SELECT count(*) FROM executions e"
-            " WHERE e.investigation_id IS NOT NULL"
-            "    OR EXISTS (SELECT 1 FROM evidence v WHERE v.execution_id = e.id)").fetchone()[0]
-        for execution_id in removable:
-            db.execute("UPDATE hash_observations SET execution_id=NULL WHERE execution_id=?", (execution_id,))
-            db.execute("DELETE FROM reports WHERE execution_id=?", (execution_id,))
-            db.execute("DELETE FROM executions WHERE id=?", (execution_id,))
-        record = {"timestamp": now(), "deleted": len(removable), "retained": retained}
+        total = db.execute("SELECT count(*) FROM executions").fetchone()[0]
+        preserved = {
+            "evidence": db.execute("SELECT count(*) FROM evidence").fetchone()[0],
+            "findings": db.execute("SELECT count(*) FROM findings").fetchone()[0],
+            "investigation_reports": db.execute(
+                "SELECT count(*) FROM reports WHERE execution_id IS NULL").fetchone()[0],
+            "hash_observations": db.execute("SELECT count(*) FROM hash_observations").fetchone()[0],
+        }
+        # Detach before deleting: the evidence is the forensic record and must
+        # outlive the job log that produced it.
+        db.execute("UPDATE evidence SET execution_id=NULL")
+        db.execute("UPDATE hash_observations SET execution_id=NULL")
+        db.execute("DELETE FROM reports WHERE execution_id IS NOT NULL")
+        db.execute("DELETE FROM executions")
+        record = {"timestamp": now(), "deleted": total, "retained": 0, "preserved": preserved}
         existing = db.execute("SELECT value FROM metadata WHERE key='history_clearances'").fetchone()
         history = (json.loads(existing[0]) if existing else [])[-99:] + [record]
         db.execute(
             "INSERT INTO metadata VALUES ('history_clearances',?)"
             " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (encode(history),))
-    return {"deleted": len(removable), "retained": retained,
-            "retained_reason": ("Executions belonging to an investigation, and executions referenced by "
-                                "collected evidence, are forensic records and were kept."),
+    return {"deleted": total, "retained": 0,
+            "retained_reason": None,
+            "preserved": preserved,
+            "preserved_reason": ("Observations, findings, artifacts and each investigation's own "
+                                 "report were kept. Only the execution log was removed."),
             "recorded_at": record["timestamp"], "workstation": view(service)}

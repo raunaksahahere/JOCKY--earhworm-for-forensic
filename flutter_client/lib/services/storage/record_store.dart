@@ -90,22 +90,41 @@ abstract class RecordStore {
 /// What a store actually removed. `retained` is not a failure: an execution
 /// that belongs to an investigation is evidence and is kept deliberately.
 class HistoryClearance {
-  const HistoryClearance({this.deleted = 0, this.retained = 0, this.retainedReason});
+  const HistoryClearance({
+    this.deleted = 0,
+    this.retained = 0,
+    this.retainedReason,
+    this.preservedEvidence = 0,
+  });
 
   final int deleted;
   final int retained;
   final String? retainedReason;
 
-  factory HistoryClearance.fromJson(Map<String, dynamic> json) => HistoryClearance(
-        deleted: asIntOrNull(json['deleted']) ?? 0,
-        retained: asIntOrNull(json['retained']) ?? 0,
-        retainedReason: asStringOrNull(json['retained_reason']),
-      );
+  /// Evidence rows the clearance deliberately left alone.
+  final int preservedEvidence;
 
-  String get summary => retained == 0
-      ? '$deleted execution records deleted.'
-      : '$deleted execution records deleted. $retained kept: '
+  factory HistoryClearance.fromJson(Map<String, dynamic> json) {
+    final preserved = json['preserved'];
+    return HistoryClearance(
+      deleted: asIntOrNull(json['deleted']) ?? 0,
+      retained: asIntOrNull(json['retained']) ?? 0,
+      retainedReason: asStringOrNull(json['retained_reason']),
+      preservedEvidence: preserved is Map ? asIntOrNull(preserved['evidence']) ?? 0 : 0,
+    );
+  }
+
+  String get summary {
+    final removed = '$deleted execution records deleted.';
+    if (retained > 0) {
+      return '$removed $retained kept: '
           '${retainedReason ?? 'they belong to an investigation.'}';
+    }
+    if (preservedEvidence > 0) {
+      return '$removed $preservedEvidence evidence records kept.';
+    }
+    return removed;
+  }
 }
 
 class FileRecordStore implements RecordStore {
