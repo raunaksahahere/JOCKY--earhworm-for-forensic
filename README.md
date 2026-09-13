@@ -62,9 +62,17 @@ flutter analyze
 flutter test
 ```
 
-For development UI launch, set `JOCKY_BACKEND` to the absolute frozen backend
-executable path and run `flutter run -d linux` inside flutter_client. Production
-launch finds `backend/jocky-backend` beside the Flutter binary.
+`JOCKY_BACKEND` is a development override only. A packaged build requires no
+environment variable: `flutter build linux --release` installs the frozen engine
+into the bundle (see `linux/CMakeLists.txt`), and the application resolves
+`backend/jocky-backend` beside its own executable. Run `scripts/build_backend.py`
+before building the client, or the bundle is produced with a CMake warning and
+cannot start an engine.
+
+Discovery order, relative to the running executable: `backend/<engine>`, then
+`backend/<engine>/<engine>`, then `data/backend/<engine>`, then `backend-dist/`
+in any ancestor directory (the developer layout). When none is runnable, System
+Status names every location and why it was rejected.
 
 Native desktop integration (from flutter_client):
 
@@ -83,7 +91,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.2.0_amd64.deb`. The bundle includes the Python interpreter,
+`build/deb/jocky_0.3.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.
@@ -116,7 +124,21 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe scripts\build_backend.py
 powershell -ExecutionPolicy Bypass -File packaging\windows\build.ps1
 powershell -ExecutionPolicy Bypass -File packaging\windows\build_installer.ps1
+powershell -ExecutionPolicy Bypass -File packaging\windows\build_portable.ps1
 ```
+
+Artifacts: `build\windows\installer\jocky-workstation-<version>-windows-x64-setup.exe`
+and `build\windows\jocky-workstation-<version>-windows-x64-portable.zip`.
+
+## Release pipeline
+
+`.github/workflows/ci.yml` runs the backend suite, the real-process smoke test
+and the client suite on every push. `.github/workflows/release.yml` builds the
+Debian package on `ubuntu-latest` and the installer and portable ZIP on
+`windows-latest` — neither target can be cross-built, since PyInstaller freezes
+for the OS it runs on. It is never triggered by an ordinary push: run it from
+the Actions tab, or push a `v*` tag. A tag, or an explicit `publish` input,
+creates a draft GitHub Release; building alone publishes nothing.
 
 The installer includes the entire Flutter release directory and one-directory
 backend. Portable launch is `packaging\windows\launch_portable.ps1 -Bundle

@@ -1,28 +1,53 @@
+# Python runtime and virtual environments
 .venv/
+venv/
+env/
 __pycache__/
 *.py[cod]
+*.egg-info/
+
+# Test and coverage output
 .pytest_cache/
 .coverage
 htmlcov/
-data/hash_ledger.json*
-reference-repo/
-referencereppos/
-docs/
+
+# Build trees and frozen output. backend-dist holds the PyInstaller engine,
+# which is rebuilt per platform and must never be committed.
 **/build/
+backend-dist/
 **/.dart_tool/
 **/ephemeral/
 **/node_modules/
 **/dist/
+.flutter-plugins-dependencies
+
+# Release artifacts. These are produced by packaging/ and published by CI.
+*.deb
+*.msi
+*.AppImage
+
+# Operator data: investigations, evidence and reports never belong in git.
+data/hash_ledger.json*
 *.db
 *.db-*
 *.sqlite*
-*.log
-*.tmp
+workspace.lock
 local-workspace/
 output/
-tmp/
+reports/*.pdf
+reports/*.json
+*.log
+*.tmp
+
+# Reference material kept beside the project, not part of it.
+reference-repo/
+referencereppos/
+docs/
+
+# Editor and OS metadata
 .idea/
 .vscode/
+*.swp
+*~
 .DS_Store
 Thumbs.db
-backend-dist/
