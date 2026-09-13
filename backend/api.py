@@ -28,10 +28,33 @@ SOURCE_NAMES = {
 
 def create_app(service, token=None, instance_id=None, shutdown=None):
     app = Flask(__name__)
-    app.config.update(MAX_CONTENT_LENGTH=1024 * 1024, SESSION_TOKEN=token or secrets.token_urlsafe(32), INSTANCE_ID=instance_id or secrets.token_hex(16))
+    app.config.update(MAX_CONTENT_LENGTH=32 * 1024 * 1024, SESSION_TOKEN=token or secrets.token_urlsafe(32), INSTANCE_ID=instance_id or secrets.token_hex(16))
+
+    #: Routes an enrolled endpoint calls. They authenticate with the endpoint's
+    #: own credential rather than the local UI session, and they are the only
+    #: routes reachable from off this machine.
+    ENDPOINT_ROUTES = ("/api/v1/endpoints/enroll", "/api/v1/endpoints/heartbeat",
+                       "/api/v1/endpoints/tasks/claim")
+
+    def is_endpoint_route():
+        path = request.path
+        return path in ENDPOINT_ROUTES or (
+            path.startswith("/api/v1/endpoints/tasks/") and path.endswith("/result"))
 
     @app.before_request
     def authenticate():
+        if is_endpoint_route():
+            # An endpoint agent runs on another machine by design, so the
+            # loopback rule cannot apply to it. It presents its own credential
+            # instead, and the routes it can reach ask for forensic collection
+            # and nothing else.
+            if request.path == "/api/v1/endpoints/enroll":
+                return None
+            credential = request.headers.get("Authorization", "")
+            token = credential[7:] if credential.startswith("Bearer ") else ""
+            request.endpoint_identity = service.fleet.authenticate(
+                request.headers.get("X-Jocky-Endpoint", ""), token)
+            return None
         if request.remote_addr not in ("127.0.0.1", None):
             raise ServiceError("Loopback connections only", "authentication_error", 401)
         if request.headers.get("Origin"):
@@ -304,6 +327,91 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
             raise ServiceError(str(error), "program_error") from error
         return {"ir": ir, "plan": plan, "explanation": describe(ir),
                 "plan_explanation": describe_plan(plan)}
+
+
+    # --- authorized endpoints --------------------------------------------
+    # An endpoint receives named forensic collection requests. There is no
+    # route here that carries a command, and adding one would defeat the reason
+    # an agent can be deployed at all.
+
+    @app.get("/api/v1/endpoints")
+    def endpoints():
+        return {"items": service.fleet.list_endpoints(),
+                "stale_after_seconds": service.fleet.STALE_AFTER_SECONDS}
+
+    @app.get("/api/v1/endpoints/<endpoint_id>")
+    def endpoint_detail(endpoint_id):
+        return service.fleet.get_endpoint(endpoint_id)
+
+    @app.post("/api/v1/endpoints/authorize")
+    def authorize_endpoint():
+        return service.fleet.issue_enrollment_token(body()), 201
+
+    @app.post("/api/v1/endpoints/<endpoint_id>/revoke")
+    def revoke_endpoint(endpoint_id):
+        body()
+        return service.fleet.revoke(endpoint_id)
+
+    @app.get("/api/v1/endpoints/<endpoint_id>/events")
+    def endpoint_events(endpoint_id):
+        service.fleet.get_endpoint(endpoint_id)
+        return {"items": service.fleet.events(endpoint_id)}
+
+    @app.get("/api/v1/endpoint-tasks")
+    def endpoint_tasks():
+        return {"items": service.fleet.tasks(
+            endpoint_id=request.args.get("endpoint_id"),
+            investigation_id=request.args.get("investigation_id"))}
+
+    @app.post("/api/v1/endpoint-tasks/sweep")
+    def sweep_endpoint_tasks():
+        body()
+        return service.fleet.sweep()
+
+    @app.post("/api/v1/collections/dispatch")
+    def dispatch_collection():
+        """Queue a compiled plan on one or more authorized endpoints."""
+        from compiler.investigation import ProgramError, compile_program
+        from compiler.plan import build_plan
+        data = body()
+        text = data.get("program")
+        if not isinstance(text, str) or not text.strip():
+            raise ServiceError("program is required")
+        try:
+            plan = build_plan(compile_program(text), platform_name=data.get("platform"))
+        except ProgramError as error:
+            raise ServiceError(str(error), "program_error") from error
+        endpoint_ids = data.get("endpoints")
+        if not isinstance(endpoint_ids, list) or not endpoint_ids:
+            raise ServiceError("endpoints must be a non-empty list of endpoint ids")
+        return service.fleet.dispatch_plan(
+            plan=plan, endpoint_ids=endpoint_ids,
+            investigation_id=data.get("investigation_id"), case_id=data.get("case_id")), 202
+
+    @app.get("/api/v1/fleet/correlation")
+    def fleet_correlation():
+        from analysis.fleet_correlation import correlate_fleet
+        return correlate_fleet(service.fleet.tasks(
+            investigation_id=request.args.get("investigation_id")),
+            endpoints=service.fleet.list_endpoints())
+
+    # --- endpoint-facing routes -------------------------------------------
+
+    @app.post("/api/v1/endpoints/enroll")
+    def endpoint_enroll():
+        return service.fleet.enroll(body()), 201
+
+    @app.post("/api/v1/endpoints/heartbeat")
+    def endpoint_heartbeat():
+        return service.fleet.heartbeat(request.endpoint_identity, body())
+
+    @app.post("/api/v1/endpoints/tasks/claim")
+    def endpoint_claim():
+        return service.fleet.claim_tasks(request.endpoint_identity, body().get("limit", 4))
+
+    @app.post("/api/v1/endpoints/tasks/<task_id>/result")
+    def endpoint_result(task_id):
+        return service.fleet.submit_result(request.endpoint_identity, task_id, body()), 201
 
     @app.post("/api/v1/shutdown")
     def stop():

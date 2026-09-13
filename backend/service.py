@@ -24,6 +24,7 @@ from analysis.timeline import build_significant_events, build_timeline
 from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, process_snapshot
 from backend import plan_runner
 from backend.casework import Casework
+from backend.fleet import Fleet
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
 from compiler.investigation import IR_VERSION, ProgramError, compile_program, describe
@@ -50,6 +51,7 @@ class Workstation:
     def __init__(self, store):
         self.store = store
         self.casework = Casework(store)
+        self.fleet = Fleet(store, self.casework)
         self.queue = queue.Queue(maxsize=8)
         self.cancel_events = {}
         self.stopping = threading.Event()

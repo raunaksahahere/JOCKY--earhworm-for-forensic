@@ -118,6 +118,27 @@ MIGRATIONS = {1: (
     # What JOCKY actually ran, so an investigation can be reproduced.
     "CREATE TABLE investigation_programs (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), created_at TEXT NOT NULL, source TEXT, ir_version INTEGER, ir TEXT, plan_version INTEGER, plan TEXT, platform TEXT, versions TEXT NOT NULL)",
     "CREATE INDEX program_investigation ON investigation_programs(investigation_id)",
+), 6: (
+    # Authorized endpoints. An endpoint exists only because an operator issued
+    # an enrollment token for it; nothing self-registers. The long-lived
+    # credential is stored as a salted digest, so the database never holds a
+    # token that could be replayed against an endpoint.
+    "CREATE TABLE endpoints (id TEXT PRIMARY KEY, name TEXT NOT NULL, hostname TEXT, platform TEXT, platform_release TEXT, agent_version TEXT, address TEXT, enrolled_at TEXT NOT NULL, last_seen_at TEXT, status TEXT NOT NULL DEFAULT 'enrolled', token_salt TEXT NOT NULL, token_digest TEXT NOT NULL, capabilities TEXT NOT NULL DEFAULT '[]', authorization_reference TEXT, metadata TEXT NOT NULL DEFAULT '{}')",
+    "CREATE UNIQUE INDEX endpoint_name ON endpoints(name)",
+    "CREATE INDEX endpoint_status ON endpoints(status,last_seen_at)",
+    # Enrollment tokens are single-use and expire. Issuing one is the explicit
+    # authorization step that precedes any collection on another machine.
+    "CREATE TABLE enrollment_tokens (id TEXT PRIMARY KEY, created_at TEXT NOT NULL, expires_at TEXT NOT NULL, issued_by TEXT NOT NULL, endpoint_name TEXT NOT NULL, token_salt TEXT NOT NULL, token_digest TEXT NOT NULL, used_at TEXT, endpoint_id TEXT REFERENCES endpoints(id), authorization_reference TEXT)",
+    "CREATE INDEX enrollment_open ON enrollment_tokens(used_at,expires_at)",
+    # One structured collection task for one endpoint. `plan_task` holds a
+    # source name and bounded options only. There is no column for a command,
+    # because an endpoint is never sent one.
+    "CREATE TABLE endpoint_tasks (id TEXT PRIMARY KEY, endpoint_id TEXT NOT NULL REFERENCES endpoints(id), investigation_id TEXT REFERENCES investigations(id), case_id TEXT REFERENCES cases(id), source TEXT NOT NULL, plan_task TEXT NOT NULL, created_at TEXT NOT NULL, available_at TEXT NOT NULL, dispatched_at TEXT, completed_at TEXT, status TEXT NOT NULL DEFAULT 'queued', attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL DEFAULT 3, result TEXT, error TEXT, result_sha256 TEXT)",
+    "CREATE INDEX endpoint_task_queue ON endpoint_tasks(endpoint_id,status,available_at)",
+    "CREATE INDEX endpoint_task_investigation ON endpoint_tasks(investigation_id)",
+    # Enrollment, heartbeat, dispatch and result activity, for the audit trail.
+    "CREATE TABLE endpoint_events (id INTEGER PRIMARY KEY, endpoint_id TEXT REFERENCES endpoints(id), timestamp TEXT NOT NULL, event TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT)",
+    "CREATE INDEX endpoint_event_time ON endpoint_events(endpoint_id,timestamp DESC)",
 )}
 
 
