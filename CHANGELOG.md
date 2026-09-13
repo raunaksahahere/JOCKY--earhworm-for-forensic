@@ -2,6 +2,51 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.6.1 — 2026-09-14
+
+A 24-hour collection produced a 60-page report. The evidence was right;
+presenting all of it as though the investigator had to read it was not.
+
+### Added
+
+- **Investigation threads.** Related activity now reads as one story instead of
+  as separate records: a tool installed, an environment made for it, the tool
+  run three times. Grouping is conservative — two activities link only when they
+  share a distinctive term *and* sit near each other in the record, or when one
+  installs what the other runs. Common words never link anything, flags are
+  excluded (`-fsSL` is not a tool), threads are capped so one shared word cannot
+  chain half the history together, and a thread states that records *appear
+  related* and never what anyone intended by them.
+- **Top investigative leads, deduplicated by pattern.** Five vendor install
+  commands are one lead about one behaviour, not five investigations. Every
+  command and every evidence identifier stays inside the lead.
+- **Significant events**: a short timeline of what actually helps explain the
+  investigation, instead of every record. Bounded, and it says so.
+- **A written conclusion** on page one that interprets the numbers rather than
+  repeating them, and never reaches for a reassuring phrase the evidence does
+  not support.
+- `Appendix B: full command history` — every command-history record, in full,
+  with its evidence identifier.
+
+### Changed
+
+- **The main report is 8 pages instead of 60.** It runs: overview and
+  conclusion, investigation result, top leads, threads, significant events,
+  routine activity, uncertain activity, collection limitations, evidence
+  package. The detail moved into nine appendices. Length is now driven by how
+  much there is to investigate, not by how many records were collected.
+- The investigator view opens on the same hierarchy: conclusion, leads, threads,
+  significant events, then the full evidence list.
+- Thread building uses an inverted index over rare terms rather than comparing
+  every activity with every other, which took collection from stalling to 10 ms.
+
+### Unchanged, deliberately
+
+Every raw record, command string and evidence identifier remains in SQLite and
+the JSON export; the appendices carry what the body summarises. Shell history is
+still not execution, a process snapshot is still a current observation, missing
+telemetry is still a limitation, and triage is still not a verdict.
+
 ## 0.6.0 — 2026-09-13
 
 Signal-to-noise. The report was honest but hard to act on: 820 records sat in

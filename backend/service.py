@@ -18,7 +18,8 @@ from analysis.execution_history import collect_execution_history
 from analysis.execution_model import CollectionWindow
 from analysis.files import list_files
 from analysis.system import get_system_info
-from analysis.timeline import build_timeline
+from analysis.threads import build_threads
+from analysis.timeline import build_significant_events, build_timeline
 from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, process_snapshot
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
@@ -427,11 +428,16 @@ class Workstation:
         # Events come from the normalized table, not the evidence blob: the blob
         # was written before stable references were assigned, so reading it
         # would produce a report whose entries cite no identifiers.
+        transitions = self.related(case_id, "transitions")
         events = [dict(row["payload"], reference=row.get("reference"))
                   for row in self.related(case_id, "execution_events")
                   if isinstance(row.get("payload"), dict)] or (execution.get("events", []) or [])
         activity = build_activity(events, artifacts=artifacts)
         counts = activity["counts_by_kind"]
+        threads = build_threads(activity["groups"])
+        significant = build_significant_events(
+            activity=activity, findings=findings,
+            artifacts={"artifacts": artifacts}, transitions=transitions)
 
         return {"report_id": identifier(), "schema_version": REPORT_SCHEMA_VERSION, "created_at": now(),
                 "investigation_id": case_id, "investigation": case, "status": status or case["status"],
@@ -454,11 +460,18 @@ class Workstation:
                     "priority_2": activity["triage"]["priorities"].get("PRIORITY_2", 0),
                     "priority_3": activity["triage"]["priorities"].get("PRIORITY_3", 0),
                     "leads": activity["lead_count"],
+                    "threads": len(threads),
+                    "significant_events": significant["entry_count"],
                 },
                 "triage": activity["triage"],
                 # The investigator's first actionable view, before any listing.
                 "leads": activity["leads"],
                 "lead_count": activity["lead_count"],
+                # Related activity read as one story, and the short timeline.
+                "threads": threads,
+                "thread_count": len(threads),
+                "significant_events": significant,
+                "conclusion": self._conclusion(activity, threads, sources, available, limitations),
                 "review_reasons": activity["review_reasons"],
                 "routine_summary": activity["routine_summary"],
                 "activity": activity,
@@ -544,6 +557,56 @@ class Workstation:
             "command-line arguments are recorded as a collection limitation, not as a reason for "
             "suspicion."
         )
+
+    @staticmethod
+    def _conclusion(activity, threads, sources, available, limitations):
+        """A plain reading of the numbers, not the numbers again.
+
+        Written from what was collected, in the order an investigator asks: is
+        anything urgent, what deserves a look, what is the rest, and what could
+        not be seen. It never reaches for a reassuring phrase the evidence does
+        not support.
+        """
+        priorities = activity["triage"]["priorities"]
+        first = priorities.get("PRIORITY_1", 0)
+        second = priorities.get("PRIORITY_2", 0)
+        third = priorities.get("PRIORITY_3", 0)
+        leads = activity["lead_count"]
+
+        sentences = []
+        if first:
+            sentences.append(
+                f"{first} records are ranked investigate-first: several independent signals "
+                "combine on each. They are listed first below and should be read before anything "
+                "else.")
+        else:
+            sentences.append(
+                "No activity in this collection combined enough signals to rank "
+                "investigate-first. That reflects what was collected, not a clean bill of health.")
+        if second:
+            sentences.append(
+                f"{second} records across {leads} distinct pattern"
+                f"{'s' if leads != 1 else ''} warrant review: each has a concrete reason for "
+                "attention, with evidence that is incomplete or uncorroborated.")
+        if threads:
+            sentences.append(
+                f"{len(threads)} groups of related activity were identified and are summarised as "
+                "investigation threads, so a sequence of related commands reads as one story "
+                "rather than as separate records.")
+        sentences.append(
+            f"The remaining {third} records are informational: ordinary operating-system and "
+            "desktop service activity, commands recognised as routine, and records whose only gap "
+            "is that the source did not capture their arguments.")
+        unavailable = [source["name"] for source in sources if source["status"] != "AVAILABLE"]
+        if unavailable:
+            sentences.append(
+                f"{', '.join(unavailable)} could not be read, so any activity only those sources "
+                "would have recorded is outside this investigation's evidence.")
+        if not available:
+            sentences.append(
+                "No historical execution source was available at all, so this collection cannot "
+                "establish what ran before it started.")
+        return " ".join(sentences)
 
     @staticmethod
     def _limitations(execution, processes, artifacts, available, sources):

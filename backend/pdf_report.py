@@ -25,6 +25,9 @@ MAX_MAIN_FINDINGS = 12
 MAX_ROUTINE_PREVIEW = 10
 MAX_SESSION_ROWS = 12
 MAX_APPENDIX_ACTIVITY = 400
+MAX_MAIN_THREADS = 10
+MAX_LEAD_COMMANDS = 8
+MAX_THREAD_COMMANDS = 10
 
 TRIAGE_LABELS = {
     "POTENTIALLY_HARMFUL": "POTENTIALLY HARMFUL",
@@ -198,39 +201,39 @@ def render_pdf(report):
         sources = history.get("sources", []) or []
         window = report.get("collection_window")
 
-        # --- Page 1: investigation overview -------------------------------
-        p("Collection coverage", heading)
-        kv("Host", (report.get("device") or {}).get("hostname"))
-        kv("Collection window", f"{window.get('start')} to {window.get('end')}" if window else None)
-        kv("Historical execution telemetry",
-           "AVAILABLE" if history.get("telemetry_available") else "NOT AVAILABLE")
-        kv("Telemetry sources read",
-           f"{len([s for s in sources if s['status'] == 'AVAILABLE'])} of {len(sources)}")
+        # =================================================================
+        # INVESTIGATOR SUMMARY. Everything below is a presentation of evidence
+        # that lives in full in the appendices, the JSON export and SQLite.
+        # =================================================================
+        p("1. Investigation overview", heading)
+        device = report.get("device") or {}
+        kv("Host", device.get("hostname"))
+        kv("Investigation", report.get("investigation_id"))
+        kv("Collection period",
+           f"{window.get('start')} to {window.get('end')}" if window else None)
+        kv("Collection status", report.get("status"))
+        kv("Historical telemetry",
+           f"{len([s for s in sources if s['status'] == 'AVAILABLE'])} of {len(sources)} sources "
+           f"read ({'AVAILABLE' if history.get('telemetry_available') else 'NOT AVAILABLE'})")
         rule()
-        for label, key in (("Execution-source records", "execution_source_records"),
+        for label, key in (("Confirmed execution records", "execution_confirmed_records"),
                            ("Command-history records", "command_history_records"),
                            ("Session records", "session_records"),
-                           ("Records with confirmed execution", "execution_confirmed_records"),
-                           ("Distinct activities", "distinct_activity"),
                            ("Current processes", "current_processes"),
-                           ("Artifacts", "artifacts"),
+                           ("Artifacts observed", "artifacts"),
                            ("Findings", "findings"),
                            ("Collection limitations", "collection_limitations")):
             kv(label, counts.get(key, 0))
         rule()
-        for category, label in TRIAGE_LABELS.items():
-            kv(label, triage_counts.get(category, 0))
+        p("Conclusion", entry)
+        p(report.get("conclusion") or report.get("summary", ""))
 
-        # --- Page 2: priority summary -------------------------------------
-        p("Investigation priority summary", heading)
-        p("Priority is where attention is worth spending. It is separate from what the evidence "
-          "supports: an ordinary system service can be honestly uncertain and still not be worth "
-          "an investigator's morning.")
+        p("2. Investigation result", heading)
         priorities = ((report.get("triage") or {}).get("priorities") or {})
         distinct_priority = ((report.get("triage") or {}).get("distinct_by_priority") or {})
         rows = [["Priority", "Records", "Distinct activity", "Meaning"]]
         for key, meaning in (
-            ("PRIORITY_1", "Investigate first — multiple signals combine"),
+            ("PRIORITY_1", "Investigate first — several signals combine"),
             ("PRIORITY_2", "Review — a concrete reason, evidence incomplete"),
             ("PRIORITY_3", "Informational — routine or weak-signal activity"),
         ):
@@ -238,114 +241,104 @@ def render_pdf(report):
                          str(distinct_priority.get(key, 0)), meaning])
         story.append(_table(rows, [110, 60, 95, 205]))
         story.append(Spacer(1, 8))
-
         distinct = ((report.get("triage") or {}).get("distinct_activity") or {})
-        rows = [["Classification", "Records", "Distinct activity"]]
+        rows = [["What the evidence supports", "Records", "Distinct activity"]]
         for category, label in TRIAGE_LABELS.items():
             rows.append([label, str(triage_counts.get(category, 0)),
                          str(distinct.get(category, 0))])
         story.append(_table(rows, [250, 105, 115]))
-        story.append(Spacer(1, 10))
-        p("Triage categories are not verdicts. 'Not harmful based on available evidence' means "
-          "nothing in what was collected stood out; it is not a statement that the activity was "
-          "safe. Missing command-line arguments are recorded as a collection limitation, never as "
-          "a reason for suspicion.")
+        story.append(Spacer(1, 8))
+        p("Triage categories are not verdicts. 'Not harmful on available evidence' means nothing "
+          "in what was collected stood out; it is not a statement that the activity was safe. "
+          "Missing command-line arguments are a collection limitation, never a reason for "
+          "suspicion.")
 
-        # --- Top investigative leads --------------------------------------
-        p("Top investigative leads", heading)
+        # --- Top leads: repeated patterns shown once -----------------------
+        p("3. Top investigative leads", heading)
         leads = report.get("leads", []) or []
         if not leads:
-            p("No activity in the collected evidence reached the review or investigate-first "
-              "tiers. This means no rule combined enough signals, not that the device is clear.")
+            p("No activity reached the review or investigate-first tiers. This means no rule "
+              "combined enough signals, not that the device is clear.")
         for lead in leads:
-            classification = lead["classification"]
-            references = ", ".join(record["reference"] for record in lead["records"][:6]
-                                   if record.get("reference"))
-            if len(lead["records"]) > 6:
-                references += f", +{len(lead['records']) - 6} more"
-            p(f"{lead.get('lead_id') or 'LEAD'}   "
-              f"{PRIORITY_LABELS[classification['investigator_priority']].upper()}   "
-              f"{TRIAGE_LABELS.get(classification['category'], classification['category'])}", entry)
-            command = lead.get("full_command_line")
-            p(command or (lead.get("executable") or lead.get("process_name") or "unnamed process"), mono)
-            if not command:
-                p(f"Full command line: not available from collected evidence "
-                  f"({lead.get('command_reconstruction_status')})")
-            when = lead.get("last_seen") or "time not recorded by source"
-            repeats = f" (x{lead['occurrences']})" if lead["occurrences"] > 1 else ""
-            execution = ("CONFIRMED by " + ", ".join(lead.get("sources") or [])
-                         if lead["execution_confirmed"] else "NOT ESTABLISHED")
-            p(f"When: {when}{repeats}   Execution: {execution}")
-            p("Why this is ranked here:")
-            for why in classification.get("why", []):
-                p(f"   - {why}")
-            for note in classification.get("limitations", []):
-                p(f"   Limitation: {note}")
-            for unknown in classification.get("unknowns", []):
-                p(f"   Unknown: {unknown}")
-            if classification.get("recommended_action"):
-                p(f"Suggested next step: {classification['recommended_action']}")
-            p(f"Evidence: {references or 'not recorded'}")
+            p(f"{lead.get('lead_id')}   {PRIORITY_LABELS[lead['priority']].upper()}   "
+              f"{TRIAGE_LABELS.get(lead['classification'], lead['classification'])}", entry)
+            p(lead["title"])
+            related = (f"{lead['activity_count']} related commands"
+                       if lead["activity_count"] > 1 else "1 command")
+            p(f"{related} | {lead['record_count']} records | Execution: "
+              f"{'CONFIRMED' if lead['execution_confirmed'] else 'NOT ESTABLISHED'}"
+              f"{'  | ' + (lead.get('last_seen') or '') if lead.get('last_seen') else ''}")
+            for command in lead["commands"][:MAX_LEAD_COMMANDS]:
+                p(command, mono)
+            if len(lead["commands"]) > MAX_LEAD_COMMANDS:
+                p(f"   ... {len(lead['commands']) - MAX_LEAD_COMMANDS} further commands in this "
+                  "pattern are in Appendix B.")
+            for why in lead.get("why", []):
+                p(f"Why it matters: {why}")
+            for note in lead.get("context", []):
+                p(f"Context: {note}")
+            for unknown in lead.get("unknowns", []):
+                p(f"Unknown: {unknown}")
+            if lead.get("recommended_action"):
+                p(f"Next step: {lead['recommended_action']}")
+            p(f"Evidence: {', '.join(lead['evidence_references'][:10])}"
+              + (f", +{len(lead['evidence_references']) - 10} more"
+                 if len(lead["evidence_references"]) > 10 else ""))
             rule()
 
-        # --- Findings -----------------------------------------------------
-        p("Findings", heading)
-        findings = report.get("findings", []) or []
-        notable = [finding for finding in findings
-                   if finding.get("triage") != "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE"]
-        reassuring = len(findings) - len(notable)
-        if not findings:
-            p("No findings were raised. This means no rule matched the collected evidence, not "
-              "that the device is clear.")
-        elif not notable:
-            p("No finding requires attention or review. Every finding records corroboration or a "
-              "routine observation.")
-        for finding in notable[:MAX_MAIN_FINDINGS]:
-            references = ", ".join(str(item.get("id")) for item in (finding.get("detail") or [])
-                                   if isinstance(item, dict))
-            p(f"[{PRIORITY_LABELS.get(finding.get('investigator_priority'), '').upper()}] "
-              f"{finding.get('reference') or ''}  {finding.get('title')}", entry)
-            p(f"Why: {finding.get('why') or finding.get('explanation')}")
-            if finding.get("recommended_action"):
-                p(f"Suggested next step: {finding['recommended_action']}")
-            p(f"Confidence: {finding.get('confidence')} | Classification: {finding.get('classification')}"
-              + (f" | Evidence: {references}" if references else ""))
+        # --- Threads: related activity read as one story -------------------
+        p("4. Investigation threads", heading)
+        threads = report.get("threads", []) or []
+        p("Records that appear related, grouped so a sequence reads as one story. A thread states "
+          "that records appear related; it does not state what anyone intended by them.")
+        if not threads:
+            p("No groups of related activity were identified.")
+        for thread in threads[:MAX_MAIN_THREADS]:
+            p(f"{thread['thread_id']}   {PRIORITY_LABELS[thread['priority']].upper()}   "
+              f"{TRIAGE_LABELS.get(thread['classification'], thread['classification'])}", entry)
+            p(f"{thread['title']} — {thread['activity_count']} activities, "
+              f"{thread['record_count']} records")
+            for command in thread["commands"][:MAX_THREAD_COMMANDS]:
+                p(command, mono)
+            if len(thread["commands"]) > MAX_THREAD_COMMANDS:
+                p(f"   ... {len(thread['commands']) - MAX_THREAD_COMMANDS} further commands in "
+                  "this thread are in Appendix B.")
+            p(f"Why: {thread['why']}")
+            p(f"Execution: {thread['execution']}")
+            for unknown in thread.get("unknowns", [])[:2]:
+                p(f"Unknown: {unknown}")
+            p(f"Evidence: {', '.join(thread['evidence_references'][:8])}"
+              + (f", +{len(thread['evidence_references']) - 8} more"
+                 if len(thread["evidence_references"]) > 8 else ""))
             rule()
-        if len(notable) > MAX_MAIN_FINDINGS:
-            p(f"... {len(notable) - MAX_MAIN_FINDINGS} further findings needing attention are "
-              "listed in Appendix C.")
-        if reassuring:
-            p(f"{reassuring} further findings record corroboration or routine observations — the "
-              "image named by the evidence was present and hashed, and nothing in the collected "
-              "evidence stood out. They are listed in full in Appendix C.")
+        if len(threads) > MAX_MAIN_THREADS:
+            p(f"{len(threads) - MAX_MAIN_THREADS} further threads are listed in Appendix B.")
 
-        # --- Priority tiers ------------------------------------------------
-        by_priority = (activity.get("by_priority") or {})
-        activity_section(
-            "Priority 1 — investigate first", by_priority.get("PRIORITY_1", []),
-            limit=MAX_MAIN_ACTIVITY,
-            empty="No activity combined enough signals to rank investigate-first.",
-            note="Multiple independent signals combine on each of these.")
+        # --- The short timeline --------------------------------------------
+        p("5. Significant events", heading)
+        significant = report.get("significant_events") or {}
+        p(significant.get("note", ""))
+        for event in significant.get("entries", []):
+            when = event.get("timestamp") or "time not recorded by source"
+            p(f"{when}   {EVIDENCE_LABELS.get(event['kind'], event['kind'])}"
+              f"{'   ' + PRIORITY_LABELS.get(event.get('priority'), '') if event.get('priority') else ''}")
+            p(f"   {event['title']}", mono)
+        if not significant.get("entries"):
+            p("No event met the significance threshold.")
+        if significant.get("truncated"):
+            p(f"{significant['candidate_count'] - significant['entry_count']} further significant "
+              "events are in the evidence package.")
 
-        activity_section(
-            "Priority 2 — review", by_priority.get("PRIORITY_2", []), limit=MAX_MAIN_REVIEW,
-            empty="No activity reached the review tier.",
-            note="A concrete reason for attention, with evidence that is incomplete or "
-                 "uncorroborated.")
-
-        p("Priority 3 — informational", heading)
+        # --- Everything else, counted rather than printed -------------------
+        p("6. Routine activity", heading)
         routine = report.get("routine_summary") or {}
-        informational = by_priority.get("PRIORITY_3", [])
-        p(f"{sum(group['occurrences'] for group in informational)} records across "
-          f"{len(informational)} distinct activities. These are ordinary system and session "
-          "activity, commands recognised as routine, and records whose only gap is that the "
-          "source did not capture arguments. Every one of them is in Appendix B and in the "
-          "investigation database.")
+        p(f"{routine.get('records', 0)} records across {routine.get('activities', 0)} distinct "
+          "activities were recognised as routine.")
         if routine.get("examples"):
             p("Common examples: " + ", ".join(routine["examples"]))
+        p(routine.get("note", ""))
 
-        # Why the uncertain records are uncertain, rather than a bare total.
-        p("What is uncertain, and why", heading)
+        p("7. Uncertain activity", heading)
         reasons = report.get("review_reasons", []) or []
         if not reasons:
             p("No activity was left uncertain.")
@@ -354,67 +347,27 @@ def render_pdf(report):
               f"{reason['description']}")
             if reason.get("examples"):
                 p("   e.g. " + "; ".join(str(example)[:70] for example in reason["examples"][:3]))
+        p("Every one of these records is preserved in the evidence package with its own "
+          "identifier, command text and source.")
 
-        # --- Evidence separated by what it proves --------------------------
-        confirmed = [group for group in groups if group["evidence_kind"] == "EXECUTION_EVIDENCE"]
-        typed = [group for group in groups if group["evidence_kind"] == "COMMAND_HISTORY"]
-        sessions = [group for group in groups if group["evidence_kind"] == "SESSION_EVENT"]
-
-        activity_section(
-            "Confirmed execution evidence", confirmed[:MAX_MAIN_EVIDENCE], limit=MAX_MAIN_EVIDENCE,
-            empty="No source that records execution was available on this host.",
-            note="These records come from sources that record execution itself. The command line is "
-                 "shown when the source captured it.")
-
-        activity_section(
-            "User-entered command history", typed[:MAX_MAIN_EVIDENCE], limit=MAX_MAIN_EVIDENCE,
-            empty="No shell history was readable.",
-            note="These are commands entered into a shell. Execution is NOT established by these "
-                 "records: the text was typed, which does not show that it ran, succeeded, or ran "
-                 "at the recorded time.")
-
-        p("Session and login activity", heading)
-        if sessions:
-            for group in sessions[:MAX_SESSION_ROWS]:
-                p(f"  {group.get('last_seen') or 'time not recorded'}  "
-                  f"{group.get('process_name')}  x{group['occurrences']}  "
-                  f"({', '.join(group.get('sources') or [])})")
-        else:
-            p("No session records were collected.")
-
-        p("Current process observations", heading)
-        snapshot = report.get("current_process_snapshot", {}) or {}
-        p("CURRENT OBSERVATION. A running process establishes the present, not the past.")
-        statistics = snapshot.get("statistics", {}) or {}
-        kv("Processes recorded", f"{statistics.get('processes_recorded')} of "
-                                 f"{statistics.get('processes_present')} present")
-        kv("Permission denied", statistics.get("permission_denied"))
-        kv("Truncated", snapshot.get("truncated"))
-        p("The full listing is in Appendix D.")
-
-        # --- Collection limitations, kept apart from findings ---------------
-        p("Collection limitations", heading)
+        p("8. Collection limitations", heading)
         p("Gaps in what could be collected. A telemetry source that was off is a limit on this "
           "investigation, not an activity finding.")
         for item in report.get("collection_limitations", []) or []:
             p(f"[{item.get('severity', '').upper()}] {item.get('title')}", entry)
             p(item.get("explanation"))
-            rule()
         for note in report.get("limitations", []) or []:
-            p(f"  {note}")
+            p(f"   {note}")
 
-        p("Unavailable telemetry", heading)
-        unavailable = report.get("unavailable_telemetry", []) or []
-        if unavailable:
-            for item in unavailable:
-                p(f"  {item['source']} | {item['status']} | {item['detail']}")
-        else:
-            p("Every telemetry source JOCKY consulted was available.")
-
-        p("Device information", heading)
-        fields(report.get("device", {}))
-
-        p("Provenance and versions", heading)
+        p("9. Evidence package", heading)
+        p("The appendices that follow hold the complete record: every activity, the full command "
+          "history, every finding, the process listing, artifact observations and provenance. "
+          "Nothing was removed to shorten this report — the sections above are a presentation of "
+          "the same evidence.")
+        kv("Total records collected", activity.get("record_count", 0))
+        kv("Distinct activities", activity.get("group_count", 0))
+        kv("Evidence identifiers", "EXEC- execution, CMD- command history, SESS- session, "
+                                   "ART- artifact, F- finding")
         fields(report.get("provenance", {}))
         fields(report.get("versions", {}))
 
@@ -425,13 +378,25 @@ def render_pdf(report):
                 p(label, heading)
                 fields(report[key])
 
-        # --- Appendices: the detail, in full -------------------------------
         story.append(PageBreak())
         p("Appendix A: telemetry sources consulted", heading)
         listing(sources, [("", "name"), ("status", "status"), ("records", "event_count"),
                           ("proves", "evidence_strength")], limit=50)
 
-        p("Appendix B: all recorded activity", heading)
+        p("Appendix B: full command history", heading)
+        p("Every command-history record, in full, with its evidence identifier. These establish "
+          "that a command was entered, never that it ran.")
+        history_groups = [group for group in groups if group["evidence_kind"] == "COMMAND_HISTORY"]
+        for group in history_groups[:MAX_APPENDIX_ACTIVITY]:
+            references = ", ".join(record["reference"] for record in group["records"][:8]
+                                   if record.get("reference"))
+            occurrences = f" (x{group['occurrences']})" if group["occurrences"] > 1 else ""
+            p(f"{group.get('full_command_line')}{occurrences}   {references}", mono)
+        if len(history_groups) > MAX_APPENDIX_ACTIVITY:
+            p(f"... {len(history_groups) - MAX_APPENDIX_ACTIVITY} further command-history "
+              "activities are in the JSON export and the investigation database.")
+
+        p("Appendix C: all recorded activity", heading)
         p("Every distinct activity, with its occurrence count and evidence identifiers. Individual "
           "records are preserved in the investigation database and the JSON export.")
         for group in groups[:MAX_APPENDIX_ACTIVITY]:
@@ -440,31 +405,38 @@ def render_pdf(report):
             p(f"... {len(groups) - MAX_APPENDIX_ACTIVITY} further distinct activities are in the "
               "database and the JSON export.")
 
-        p("Appendix C: findings in full", heading)
-        listing(findings, [("", "reference"), ("", "triage"), ("", "severity"), ("", "title"),
+        p("Appendix C-2: investigation threads in full", heading)
+        for thread in report.get("threads", []) or []:
+            p(f"{thread['thread_id']} {thread['title']} — {thread['activity_count']} activities", entry)
+            for command in thread["commands"]:
+                p(command, mono)
+            p(f"Evidence: {', '.join(thread['evidence_references'][:40])}")
+
+        p("Appendix D: findings in full", heading)
+        listing(report.get("findings", []) or [], [("", "reference"), ("", "triage"), ("", "severity"), ("", "title"),
                            ("confidence", "confidence")])
 
-        p("Appendix D: current process listing", heading)
+        p("Appendix E: current process listing", heading)
         listing(report.get("appendix_process_listing", []),
                 [("pid", "pid"), ("", "name"), ("image", "executable"),
                  ("parent", "parent_pid"), ("started", "started_at")],
                 empty="No processes were recorded.")
 
-        p("Appendix E: artifacts", heading)
+        p("Appendix F: artifacts", heading)
         artifacts = report.get("artifacts", []) or []
         listing(artifacts, [("", "reference"), ("", "path"), ("status", "collection_status"),
                             ("bytes", "size_bytes"), ("", "hash")])
 
-        p("Appendix F: evidence references", heading)
+        p("Appendix G: evidence references", heading)
         listing(report.get("evidence", []),
                 [("", "id"), ("", "type"), ("source", "source"), ("status", "status"),
                  ("collected", "collected_at")])
 
-        p("Appendix G: investigation state history", heading)
+        p("Appendix H: investigation state history", heading)
         listing(report.get("timeline", []),
                 [("", "timestamp"), ("", "state"), ("", "detail")])
 
-        p("Appendix H: execution results", heading)
+        p("Appendix I: execution results", heading)
         evidence_by_execution = {item.get("execution_id"): item["id"]
                                  for item in report.get("evidence", []) if item.get("execution_id")}
         listing([{**{k: v for k, v in item.items() if k != "result"},

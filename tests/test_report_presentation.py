@@ -165,7 +165,78 @@ def test_the_pdf_separates_history_from_execution(report):
     reader = PdfReader(BytesIO(render_pdf(report)))
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
-    assert "Confirmed execution evidence" in text
-    assert "User-entered command history" in text
-    assert "Execution is NOT established by these records" in text
+    # The summary keeps the distinction on every lead, and the counts name each
+    # kind of record separately.
+    assert "Execution: NOT ESTABLISHED" in text
+    assert "Command-history records" in text
+    assert "Confirmed execution records" in text
     assert "Collection limitations" in text
+    # And the full command history is preserved in its own appendix.
+    assert "Appendix B: full command history" in text
+
+
+def test_the_main_report_is_short_enough_to_read(report):
+    """The summary layer, not the evidence, decides the length of the body."""
+    from io import BytesIO
+    from pypdf import PdfReader
+    reader = PdfReader(BytesIO(render_pdf(report)))
+    appendix = next((index for index, page in enumerate(reader.pages, 1)
+                     if "Appendix A:" in (page.extract_text() or "")), len(reader.pages) + 1)
+
+    assert appendix - 1 <= 12, f"the investigator summary is {appendix - 1} pages"
+
+
+def test_the_body_opens_with_a_conclusion_not_statistics(report):
+    from io import BytesIO
+    from pypdf import PdfReader
+    reader = PdfReader(BytesIO(render_pdf(report)))
+    first = reader.pages[0].extract_text() or ""
+
+    assert "1. Investigation overview" in first
+    assert report["conclusion"], "the overview must interpret the numbers"
+    assert "records are informational" in report["conclusion"]
+
+
+def test_the_conclusion_never_manufactures_reassurance(report):
+    conclusion = report["conclusion"]
+
+    assert "not a clean bill of health" in conclusion or "investigate-first" in conclusion
+    for phrase in ("no threats", "device is clean", "system is secure", "nothing malicious"):
+        assert phrase not in conclusion.lower()
+
+
+def test_raw_evidence_is_unchanged_by_the_summary_layer(report):
+    """Summarising must not reduce the record count."""
+    grouped = sum(group["occurrences"] for group in report["activity"]["groups"])
+
+    assert grouped == len(report["historical_execution"]["events"])
+    assert report["appendix_process_listing"]
+    assert report["evidence"]
+
+
+def test_the_significant_timeline_is_bounded_and_says_so(report):
+    significant = report["significant_events"]
+
+    assert significant["entry_count"] <= 40
+    assert "remain in the evidence package" in significant["note"]
+
+
+def test_threads_and_leads_reach_the_report(report):
+    assert isinstance(report["threads"], list)
+    assert isinstance(report["leads"], list)
+    assert report["record_counts"]["threads"] == len(report["threads"])
+    for lead in report["leads"]:
+        assert lead["lead_id"] and lead["evidence_references"]
+
+
+def test_a_small_investigation_still_produces_a_readable_report(service, tmp_path):
+    """Empty and tiny collections must not crash the summary layer."""
+    case = service.create_case({"title": "Tiny"})
+    service.collect(case["id"], {"max_processes": 1, "window_hours": 1})
+    wait(service, case["id"])
+    payload = service.related(case["id"], "reports")[-1]["payload"]
+
+    pdf = render_pdf(payload)
+
+    assert pdf.startswith(b"%PDF-")
+    assert payload["conclusion"]

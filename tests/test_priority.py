@@ -230,9 +230,10 @@ def test_grouping_reports_priority_counts_and_leads():
     assert activity["triage"]["priorities"][PRIORITY_1] == 1
     assert activity["triage"]["priorities"][PRIORITY_2] == 1
     assert activity["triage"]["priorities"][PRIORITY_3] == 2
-    # Leads are the top tiers, ordered, and identified.
+    # Leads are the top tiers, ordered, identified, and deduplicated by pattern.
     assert [lead["lead_id"] for lead in activity["leads"]] == ["LEAD-001", "LEAD-002"]
-    assert activity["leads"][0]["executable"] == "/tmp/staged"
+    assert activity["leads"][0]["priority"] == PRIORITY_1
+    assert "/tmp/staged" in activity["leads"][0]["commands"]
     assert activity["by_priority"][PRIORITY_1]
 
 

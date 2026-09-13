@@ -160,10 +160,7 @@ def build_activity(events, *, artifacts=()) -> dict:
         ),
     )
 
-    leads = [group for group in ranked
-             if group["classification"]["investigator_priority"] in {PRIORITY_1, PRIORITY_2}]
-    for index, group in enumerate(leads[:MAX_LEADS], start=1):
-        group["lead_id"] = f"LEAD-{index:03d}"
+    leads = build_leads(ranked)
 
     return {
         "groups": ranked,
@@ -171,7 +168,7 @@ def build_activity(events, *, artifacts=()) -> dict:
         "record_count": sum(group["occurrences"] for group in ranked),
         "highlights": ranked[:MAX_HIGHLIGHTED_GROUPS],
         # The investigator's first actionable view.
-        "leads": leads[:MAX_LEADS],
+        "leads": leads,
         "lead_count": len(leads),
         "by_priority": {
             PRIORITY_1: [g for g in ranked if g["classification"]["investigator_priority"] == PRIORITY_1],
@@ -320,3 +317,87 @@ def search_activity(groups, term) -> list:
         if needle in haystack.lower():
             matched.append(group)
     return matched
+
+
+#: Signals that describe *why* something is concerning, as opposed to how well
+#: it is corroborated. Two activities showing the same concern for the same
+#: reason are one lead, however many times the operator typed it.
+_PATTERN_SIGNALS = (
+    "remote_content_to_interpreter", "download_to_writable_location",
+    "encoded_powershell", "execution_from_writable_location",
+    "image_absent_after_execution", "installer_shaped_source",
+)
+
+_PATTERN_TITLES = {
+    "remote_content_to_interpreter": "Remote content piped into an interpreter",
+    "download_to_writable_location": "Downloads written to a writable location",
+    "encoded_powershell": "PowerShell invoked with an encoded command",
+    "execution_from_writable_location": "Execution from a writable or temporary location",
+    "image_absent_after_execution": "Executed image no longer present",
+}
+
+
+def build_leads(ranked) -> list[dict]:
+    """The top leads, with repetitions of one pattern shown once.
+
+    Five vendor install commands are one lead about one behaviour, not five
+    investigations. Each individual command, with its own evidence identifier,
+    stays inside the lead and in the evidence package.
+    """
+    candidates = [group for group in ranked
+                  if group["classification"]["investigator_priority"] in {PRIORITY_1, PRIORITY_2}]
+    patterns = {}
+    for group in candidates:
+        signature = (
+            group["evidence_kind"],
+            group["classification"]["investigator_priority"],
+            tuple(sorted(signal["name"] for signal in group["classification"]["signals"]
+                         if signal["name"] in _PATTERN_SIGNALS)),
+        )
+        patterns.setdefault(signature, []).append(group)
+
+    leads = []
+    for (kind, priority, signature), members in patterns.items():
+        first = members[0]["classification"]
+        title = next((_PATTERN_TITLES[name] for name in signature if name in _PATTERN_TITLES),
+                     "Activity requiring attention")
+        context = [signal["detail"] for signal in members[0]["classification"]["signals"]
+                   if signal["name"] == "installer_shaped_source"]
+        references, commands = [], []
+        for member in members:
+            for record in member["records"]:
+                if record.get("reference"):
+                    references.append(record["reference"])
+            command = (member.get("full_command_line") or member.get("executable")
+                       or member.get("process_name"))
+            if command and command not in commands:
+                commands.append(command)
+        leads.append({
+            "lead_id": None,
+            "title": title,
+            "pattern": list(signature),
+            "evidence_kind": kind,
+            "priority": priority,
+            "priority_label": PRIORITY_LABELS[priority],
+            "classification": first["category"],
+            "activity_count": len(members),
+            "record_count": sum(member["occurrences"] for member in members),
+            "commands": commands,
+            "execution_confirmed": any(member["execution_confirmed"] for member in members),
+            "why": [signal["detail"] for signal in first["signals"] if signal["weight"] > 0],
+            "context": context,
+            "unknowns": first.get("unknowns", []),
+            "limitations": first.get("limitations", []),
+            "recommended_action": first.get("recommended_action"),
+            "evidence_references": references[:120],
+            "first_seen": min((member["first_seen"] for member in members
+                               if member["first_seen"]), default=None),
+            "last_seen": max((member["last_seen"] for member in members
+                              if member["last_seen"]), default=None),
+            "groups": members,
+        })
+
+    leads.sort(key=lambda lead: (PRIORITY_ORDER[lead["priority"]], -lead["record_count"]))
+    for index, lead in enumerate(leads[:MAX_LEADS], start=1):
+        lead["lead_id"] = f"LEAD-{index:03d}"
+    return leads[:MAX_LEADS]

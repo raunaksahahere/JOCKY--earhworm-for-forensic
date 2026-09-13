@@ -149,3 +149,86 @@ def _counts(entries):
     for entry in entries:
         by_kind[entry["kind"]] = by_kind.get(entry["kind"], 0) + 1
     return {"by_kind": by_kind}
+
+
+MAX_SIGNIFICANT_EVENTS = 40
+
+
+def build_significant_events(*, activity=None, findings=(), artifacts=None, transitions=(),
+                             limit=MAX_SIGNIFICANT_EVENTS) -> dict:
+    """The events that actually help explain the investigation.
+
+    The full timeline is every record the collection produced, which on an
+    ordinary desktop is thousands of lines and explains nothing. This is the
+    short version: activity that needs attention, findings, artifacts the
+    evidence named and could not find, and the investigation's own state
+    changes. Everything else stays in the full timeline and the database.
+    """
+    activity = activity or {}
+    artifacts = artifacts or {}
+    entries = []
+
+    for group in activity.get("groups", []) or []:
+        classification = group["classification"]
+        if classification["investigator_priority"] not in {"PRIORITY_1", "PRIORITY_2"}:
+            continue
+        entries.append(_entry(
+            group["evidence_kind"], group.get("last_seen") or group.get("first_seen"),
+            title=(group.get("full_command_line") or group.get("executable")
+                   or group.get("process_name") or "unnamed activity"),
+            detail=classification["reason"],
+            source=", ".join(group.get("sources") or []),
+            classification=classification["category"],
+            references=[{"kind": "execution_event", "id": record["reference"]}
+                        for record in group["records"][:6] if record.get("reference")],
+            extra={"priority": classification["investigator_priority"],
+                   "occurrences": group["occurrences"],
+                   "execution_confirmed": group["execution_confirmed"]},
+        ))
+
+    for finding in findings or ():
+        if finding.get("triage") == "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE":
+            continue
+        entries.append(_entry(
+            FINDING, finding.get("timestamp"),
+            title=f"{finding.get('reference') or 'finding'}: {finding.get('title')}",
+            detail=finding.get("why") or finding.get("explanation"),
+            source="JOCKY correlation",
+            classification=finding.get("classification", "INFERRED"),
+            extra={"priority": finding.get("investigator_priority"),
+                   "severity": finding.get("severity")},
+        ))
+
+    # An artifact the evidence named and could not find is worth a line; the
+    # hundreds that were present and unremarkable are not.
+    for record in (artifacts.get("artifacts", []) or []):
+        if record.get("collection_status") != "MISSING":
+            continue
+        entries.append(_entry(
+            ARTIFACT_OBSERVATION, record.get("modified"),
+            title=f"{record['filename']} named by evidence but absent",
+            detail=f"No file exists at {record['path']} at collection time.",
+            source=record.get("source"),
+            classification="UNAVAILABLE",
+            references=[{"kind": "artifact", "id": record.get("reference") or record["path"]}],
+        ))
+
+    for transition in transitions or ():
+        entries.append(_entry(
+            INVESTIGATION_STATE, transition.get("timestamp"),
+            title=f"Investigation state: {transition.get('state')}",
+            detail=transition.get("detail"),
+            source="JOCKY workstation", classification="OBSERVED"))
+
+    dated = sorted((entry for entry in entries if entry["timestamp"]),
+                   key=lambda entry: entry["timestamp"])
+    undated = [entry for entry in entries if not entry["timestamp"]]
+    selected = (dated + undated)[:limit]
+    return {
+        "entries": selected,
+        "entry_count": len(selected),
+        "candidate_count": len(entries),
+        "truncated": len(entries) > limit,
+        "note": ("Only events that help explain the investigation. The complete timeline and "
+                 "every underlying record remain in the evidence package and the database."),
+    }

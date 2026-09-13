@@ -145,6 +145,165 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     return value is Map<String, dynamic> ? value : const {};
   }
 
+  List<dynamic> get _leads => _report['leads'] as List? ?? const [];
+  List<dynamic> get _threads => _report['threads'] as List? ?? const [];
+
+  Map<String, dynamic> get _significant {
+    final value = _report['significant_events'];
+    return value is Map<String, dynamic> ? value : const {};
+  }
+
+  Widget _sectionCard(String title, String? subtitle, List<Widget> children) => Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: Theme.of(context).textTheme.titleMedium),
+            if (subtitle != null) ...[
+              const SizedBox(height: 4),
+              SelectableText(subtitle, style: const TextStyle(fontSize: 12)),
+            ],
+            const SizedBox(height: 10),
+            ...children,
+          ]),
+        ),
+      );
+
+  /// Repeated occurrences of one pattern appear once, with every command and
+  /// evidence identifier kept inside the lead.
+  Widget _leadsCard() {
+    if (_reports.isEmpty) return const SizedBox.shrink();
+    if (_leads.isEmpty) {
+      return _sectionCard('Top investigative leads', null, const [
+        Text('No activity reached the review or investigate-first tiers. This means no rule '
+             'combined enough signals, not that the device is clear.',
+             style: TextStyle(fontSize: 12.5)),
+      ]);
+    }
+    return _sectionCard(
+      'Top investigative leads', '${_leads.length} pattern(s) worth an investigator\'s time.',
+      [for (final lead in _leads) _leadTile(lead)],
+    );
+  }
+
+  Widget _leadTile(dynamic lead) {
+    final commands = (lead['commands'] as List? ?? const []);
+    final references = (lead['evidence_references'] as List? ?? const []);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: _priorityColor('${lead['priority']}'), width: 3)),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 10, runSpacing: 4, children: [
+          Text('${lead['lead_id']}',
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+          Text(_priorityLabels['${lead['priority']}'] ?? '',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                  color: _priorityColor('${lead['priority']}'))),
+          Text(_triageLabels['${lead['classification']}'] ?? '',
+              style: TextStyle(fontSize: 11, color: _triageColor('${lead['classification']}'))),
+        ]),
+        const SizedBox(height: 4),
+        SelectableText('${lead['title']}',
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+        Text('${lead['activity_count']} related command(s) | ${lead['record_count']} records'
+             '  |  Execution: '
+             '${lead['execution_confirmed'] == true ? 'CONFIRMED' : 'NOT ESTABLISHED'}',
+            style: const TextStyle(fontSize: 11.5)),
+        const SizedBox(height: 6),
+        for (final command in commands.take(6))
+          SelectableText('$command',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        if (commands.length > 6)
+          Text('... ${commands.length - 6} further commands in this pattern',
+              style: const TextStyle(fontSize: 11.5)),
+        const SizedBox(height: 4),
+        for (final why in (lead['why'] as List? ?? const []))
+          Text('Why it matters: $why', style: const TextStyle(fontSize: 11.5)),
+        for (final note in (lead['context'] as List? ?? const []))
+          Text('Context: $note', style: const TextStyle(fontSize: 11.5)),
+        for (final unknown in (lead['unknowns'] as List? ?? const []))
+          Text('Unknown: $unknown', style: const TextStyle(fontSize: 11.5)),
+        if (lead['recommended_action'] != null)
+          Text('Next step: ${lead['recommended_action']}',
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+        SelectableText('Evidence: ${references.take(10).join(', ')}'
+            '${references.length > 10 ? ', +${references.length - 10} more' : ''}',
+            style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+      ]),
+    );
+  }
+
+  /// Related activity read as one story. The full command list and evidence
+  /// identifiers sit behind the expansion, not in the summary.
+  Widget _threadsCard() {
+    if (_reports.isEmpty || _threads.isEmpty) return const SizedBox.shrink();
+    return _sectionCard(
+      'Investigation threads',
+      'Records that appear related, grouped so a sequence reads as one story. A thread states '
+      'that records appear related; it does not state what anyone intended by them.',
+      [
+        for (final thread in _threads.take(10))
+          ExpansionTile(
+            tilePadding: EdgeInsets.zero,
+            title: Text('${thread['thread_id']}  ${thread['title']}',
+                style: const TextStyle(fontSize: 13)),
+            subtitle: Text(
+                '${_priorityLabels['${thread['priority']}'] ?? ''}  |  '
+                '${thread['activity_count']} activities, ${thread['record_count']} records',
+                style: TextStyle(fontSize: 11.5, color: _priorityColor('${thread['priority']}'))),
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(left: 8, right: 8, bottom: 12),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  SelectableText('Why: ${thread['why']}', style: const TextStyle(fontSize: 12)),
+                  SelectableText('Execution: ${thread['execution']}',
+                      style: const TextStyle(fontSize: 12)),
+                  const SizedBox(height: 6),
+                  for (final command in (thread['commands'] as List? ?? const []))
+                    SelectableText('$command',
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                  const SizedBox(height: 6),
+                  for (final unknown in (thread['unknowns'] as List? ?? const []))
+                    Text('Unknown: $unknown', style: const TextStyle(fontSize: 11.5)),
+                  SelectableText(
+                      'Evidence: ${(thread['evidence_references'] as List? ?? const []).join(', ')}',
+                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                ]),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  Widget _significantEventsCard() {
+    final entries = _significant['entries'] as List? ?? const [];
+    if (_reports.isEmpty) return const SizedBox.shrink();
+    return _sectionCard(
+      'Significant events',
+      '${_significant['note'] ?? ''}',
+      entries.isEmpty
+          ? const [Text('No event met the significance threshold.',
+              style: TextStyle(fontSize: 12.5))]
+          : [
+              for (final event in entries)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${event['timestamp'] ?? 'time not recorded by source'}  |  '
+                         '${_kindLabels['${event['kind']}'] ?? event['kind']}',
+                        style: const TextStyle(fontSize: 11)),
+                    SelectableText('${event['title']}',
+                        style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+                  ]),
+                ),
+            ],
+    );
+  }
+
   Map<String, dynamic> get _triageCounts {
     final triage = _report['triage'];
     final counts = triage is Map ? triage['counts'] : null;
@@ -290,6 +449,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     return rows;
   }
 
+  /// Full evidence. Keyed so tests can address this list rather than the
+  /// summary cards above, which deliberately repeat some of the same commands.
   Widget _activityPanel() {
     final rows = _filteredActivity;
     final counts = <String, int>{};
@@ -302,6 +463,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     final leadCount =
         (priorityCounts['PRIORITY_1'] ?? 0) + (priorityCounts['PRIORITY_2'] ?? 0);
     return Card(
+      key: const Key('activity-panel'),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -487,7 +649,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           TextButton(onPressed: () => context.go('/device'), child: const Text('All investigations')),
         ]),
         if (!terminal.contains(_case?['status'])) const Padding(padding: EdgeInsets.all(16), child: Text('Preparing → Collecting → Analyzing → Finalizing. Exact progress is unavailable; stages reflect persisted backend state.')),
+        // Investigator summary first: the conclusion, then the leads, threads
+        // and significant events. Full evidence sits below and is never hidden.
         _collectionSummary(),
+        const SizedBox(height: 16),
+        _leadsCard(),
+        const SizedBox(height: 16),
+        _threadsCard(),
+        const SizedBox(height: 16),
+        _significantEventsCard(),
         const SizedBox(height: 16),
         _activityPanel(),
         _section('Device information', _case?['device']),

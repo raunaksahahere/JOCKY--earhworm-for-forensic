@@ -58,12 +58,23 @@ void main() {
     // Priority is present, three-tiered, and separate from classification.
     final priorities = report['triage']['priorities'] as Map;
     expect(priorities.keys.toSet(), {'PRIORITY_1', 'PRIORITY_2', 'PRIORITY_3'});
+    // Leads are deduplicated by pattern: one lead can cover several commands,
+    // and every one of them keeps its own evidence identifier.
     for (final lead in report['leads'] as List) {
-      final classification = lead['classification'];
-      expect(['PRIORITY_1', 'PRIORITY_2'], contains(classification['investigator_priority']));
-      expect(classification['why'], isNotEmpty,
-          reason: 'a lead must say why it is ranked where it is');
+      expect(['PRIORITY_1', 'PRIORITY_2'], contains(lead['priority']));
+      expect(lead['why'], isNotEmpty, reason: 'a lead must say why it matters');
+      expect(lead['commands'], isNotEmpty);
+      expect(lead['evidence_references'], isNotEmpty);
     }
+    // Threads group related activity without claiming intent.
+    for (final thread in report['threads'] as List) {
+      expect(thread['thread_id'], isNotNull);
+      expect(thread['activity_count'], greaterThanOrEqualTo(2));
+      expect(thread['note'], contains('does not state what anyone intended'));
+    }
+    // The short timeline is bounded and says where the rest lives.
+    expect(report['significant_events']['entry_count'], lessThanOrEqualTo(40));
+    expect(report['conclusion'], isNotEmpty);
     // Missing arguments are a limitation, never a concern signal.
     for (final group in report['activity']['groups'] as List) {
       if (group['command_reconstruction_status'] == 'EXECUTABLE_ONLY') {

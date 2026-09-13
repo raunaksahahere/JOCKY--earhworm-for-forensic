@@ -62,10 +62,20 @@ def smoke(command, workspace):
         priorities = stored['triage']['priorities']
         assert set(priorities) == {'PRIORITY_1', 'PRIORITY_2', 'PRIORITY_3'}, priorities
         for lead in stored['leads']:
-            classification = lead['classification']
-            assert classification['investigator_priority'] in ('PRIORITY_1', 'PRIORITY_2')
-            assert classification['why'], 'a lead must say why it is ranked where it is'
-            assert lead['records'], 'a lead must cite the records behind it'
+            assert lead['priority'] in ('PRIORITY_1', 'PRIORITY_2'), lead['priority']
+            assert lead['why'], 'a lead must say why it matters'
+            assert lead['evidence_references'], 'a lead must cite the records behind it'
+            assert lead['commands'], 'a lead must show the commands it covers'
+        # Threads group related activity without losing individual records.
+        for thread in stored['threads']:
+            assert thread['thread_id'] and thread['evidence_references']
+            assert thread['activity_count'] >= 2, 'a single activity is not a thread'
+            assert 'does not state what anyone intended' in thread['note']
+        # The short timeline is bounded; the full one is not discarded.
+        significant = stored['significant_events']
+        assert significant['entry_count'] <= 40
+        assert 'remain in the evidence package' in significant['note']
+        assert stored['conclusion'], 'the overview must interpret the numbers'
         # Missing arguments are a limitation, never a concern signal.
         for group in stored['activity']['groups']:
             if group['command_reconstruction_status'] in ('EXECUTABLE_ONLY', 'NOT_AVAILABLE'):
@@ -113,10 +123,11 @@ def smoke(command, workspace):
                           'execution_events':len(history),'artifacts':len(artifacts),
                           'findings':len(findings),'timeline_entries':len(event_timeline),
                           'record_counts':counts,'triage':triage,'priorities':priorities,
-                          'leads':[{'lead':lead.get('lead_id'),
-                                    'priority':lead['classification']['investigator_priority'],
-                                    'command':(lead.get('full_command_line') or lead.get('executable'))[:70]}
+                          'leads':[{'lead':lead.get('lead_id'),'priority':lead['priority'],
+                                    'title':lead['title'],'activities':lead['activity_count']}
                                    for lead in stored['leads']],
+                          'threads':len(stored['threads']),
+                          'significant_events':significant['entry_count'],
                           'longest_command':max((len(e['full_command_line'] or '') for e in history), default=0),
                           'sources':{source['name']: source['status'] for source in sources},
                           'workspace':str(workspace)}))

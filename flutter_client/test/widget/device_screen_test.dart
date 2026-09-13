@@ -66,6 +66,46 @@ void main() {
           'statistics': {'processes_recorded': 385, 'processes_present': 385},
         },
         'limitations': ['A hash compares bytes; it does not prove authenticity.'],
+        'conclusion': 'No activity in this collection combined enough signals to rank '
+            'investigate-first. That reflects what was collected, not a clean bill of health.',
+        'leads': [
+          {
+            'lead_id': 'LEAD-001', 'title': 'Remote content piped into an interpreter',
+            'priority': 'PRIORITY_2', 'classification': 'POTENTIALLY_HARMFUL',
+            'activity_count': 2, 'record_count': 3, 'execution_confirmed': false,
+            'commands': [
+              'curl -fsSL https://example.com/install.sh | sudo bash',
+              'curl -fsSL https://other.example/setup.sh | sh',
+            ],
+            'why': ['Remote content is piped directly into an interpreter.'],
+            'context': ['The URL is shaped like a vendor install script.'],
+            'unknowns': ['Whether the command actually ran.'],
+            'recommended_action': 'Read the full command, then check the referenced path.',
+            'evidence_references': ['CMD-0001', 'CMD-0002'],
+          },
+        ],
+        'threads': [
+          {
+            'thread_id': 'THREAD-001', 'title': 'Tool installation and subsequent use',
+            'priority': 'PRIORITY_3', 'classification': 'NEEDS_REVIEW',
+            'activity_count': 3, 'record_count': 4,
+            'why': 'These records appear related: one installs a tool and another uses it.',
+            'execution': 'Not established. Every activity here is command history.',
+            'commands': ['python3 -m venv ~/tool-env', 'source ~/tool-env/bin/activate',
+                         'tool --scan example'],
+            'unknowns': ['Whether the command actually ran.'],
+            'evidence_references': ['CMD-0010', 'CMD-0011', 'CMD-0012'],
+          },
+        ],
+        'significant_events': {
+          'entries': [
+            {'timestamp': '2026-09-11T14:32:10+00:00', 'kind': 'COMMAND_HISTORY',
+             'title': 'curl -fsSL https://example.com/install.sh | sudo bash'},
+          ],
+          'entry_count': 1, 'candidate_count': 1, 'truncated': false,
+          'note': 'Only events that help explain the investigation. The complete timeline and '
+              'every underlying record remain in the evidence package and the database.',
+        },
         'unavailable_telemetry': telemetryAvailable
             ? [{'source': 'kernel audit log', 'status': 'NOT_AVAILABLE', 'detail': 'absent'}]
             : [
@@ -157,6 +197,10 @@ void main() {
 
   group('investigator activity view', () {
     /// Switches the priority filter to "All evidence".
+    /// Finds text inside the full-evidence list, not the summary cards above.
+    Finder inPanel(String text) => find.descendant(
+        of: find.byKey(const Key('activity-panel')), matching: find.text(text));
+
     Future<void> showEverything(WidgetTester tester) async {
       await tester.tap(find.textContaining('Leads — priority 1 and 2').last);
       await tester.pumpAndSettle();
@@ -179,9 +223,9 @@ void main() {
       await pumpActivity(tester);
       await showEverything(tester);
 
-      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
-      expect(find.text('git clone https://github.com/example/project.git'), findsOneWidget);
-      expect(find.text('curl'), findsNothing, reason: 'the executable alone is not the evidence');
+      expect(inPanel('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
+      expect(inPanel('git clone https://github.com/example/project.git'), findsOneWidget);
+      expect(inPanel('curl'), findsNothing, reason: 'the executable alone is not the evidence');
     });
 
     testWidgets('a missing command line is stated, not invented', (tester) async {
@@ -229,8 +273,8 @@ void main() {
       await tester.enterText(find.byType(TextField).first, 'github.com');
       await tester.pumpAndSettle();
 
-      expect(find.text('git clone https://github.com/example/project.git'), findsOneWidget);
-      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsNothing);
+      expect(inPanel('git clone https://github.com/example/project.git'), findsOneWidget);
+      expect(inPanel('curl -fsSL https://example.com/install.sh | sudo bash'), findsNothing);
       expect(find.textContaining('1 of 3 records'), findsOneWidget);
     });
 
@@ -260,6 +304,9 @@ void main() {
   });
 
   group('investigator priority', () {
+    Finder inPriorityPanel(String text) => find.descendant(
+        of: find.byKey(const Key('activity-panel')), matching: find.text(text));
+
     Future<void> pumpPriority(WidgetTester tester) async {
       tester.view.physicalSize = const Size(1400, 3200);
       tester.view.devicePixelRatio = 1.0;
@@ -273,8 +320,9 @@ void main() {
       await pumpPriority(tester);
 
       // Only the priority-2 record is a lead; the two priority-3 rows are not.
-      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
-      expect(find.text('/usr/bin/python3'), findsNothing);
+      expect(inPriorityPanel('curl -fsSL https://example.com/install.sh | sudo bash'),
+          findsOneWidget);
+      expect(inPriorityPanel('/usr/bin/python3'), findsNothing);
       expect(find.textContaining('1 of 3 records'), findsOneWidget);
       expect(find.textContaining('showing leads only'), findsOneWidget);
     });
@@ -306,7 +354,71 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('2 of 3 records'), findsOneWidget);
-      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsNothing);
+      // Scoped to the evidence list: the leads card above deliberately repeats
+      // the same command, and that repetition is the point of the summary.
+      expect(inPriorityPanel('curl -fsSL https://example.com/install.sh | sudo bash'),
+          findsNothing);
+    });
+  });
+
+  group('investigator summary', () {
+    Future<void> pumpSummary(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1400, 4200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      script(telemetryAvailable: true);
+      await tester.pumpWidget(harness(const DeviceScreen(caseId: caseId), transport: transport));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('opens on the summary, leads and threads', (tester) async {
+      await pumpSummary(tester);
+
+      expect(find.text('Top investigative leads'), findsOneWidget);
+      expect(find.text('Investigation threads'), findsOneWidget);
+      expect(find.text('Significant events'), findsOneWidget);
+    });
+
+    testWidgets('a lead shows every command in its pattern, not one of them', (tester) async {
+      await pumpSummary(tester);
+
+      expect(find.text('LEAD-001'), findsOneWidget);
+      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsWidgets);
+      expect(find.text('curl -fsSL https://other.example/setup.sh | sh'), findsOneWidget);
+      expect(find.textContaining('2 related command(s)'), findsOneWidget);
+      expect(find.textContaining('Execution: NOT ESTABLISHED'), findsOneWidget);
+    });
+
+    testWidgets('a lead cites its evidence and a next step', (tester) async {
+      await pumpSummary(tester);
+
+      expect(find.textContaining('Evidence: CMD-0001, CMD-0002'), findsWidgets);
+      expect(find.textContaining('Next step:'), findsOneWidget);
+      expect(find.textContaining('Unknown: Whether the command actually ran.'), findsWidgets);
+    });
+
+    testWidgets('a thread is summarised until it is opened', (tester) async {
+      await pumpSummary(tester);
+
+      expect(find.textContaining('THREAD-001'), findsOneWidget);
+      // The member commands live behind the expansion.
+      expect(find.text('source ~/tool-env/bin/activate'), findsNothing);
+
+      await tester.tap(find.textContaining('THREAD-001'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('source ~/tool-env/bin/activate'), findsWidgets);
+      expect(find.textContaining('Evidence: CMD-0010'), findsWidgets);
+      expect(find.textContaining('Not established'), findsWidgets);
+    });
+
+    testWidgets('a thread never claims intent', (tester) async {
+      await pumpSummary(tester);
+      await tester.tap(find.textContaining('THREAD-001'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('appear related'), findsWidgets);
+      expect(find.textContaining('does not state what anyone intended'), findsOneWidget);
     });
   });
 }
