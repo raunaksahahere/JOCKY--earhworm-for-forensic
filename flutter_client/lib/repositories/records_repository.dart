@@ -17,6 +17,8 @@ class RecordsRepository {
 
   Future<String> storeLocation() => _store.location();
 
+  Future<HistoryClearance> clearExecutionHistory() => _store.clearExecutionHistory();
+
   /// Newest-first execution list, capped so a long session cannot grow the
   /// store without bound. The cap is explicit in the UI.
   static const executionRetention = 500;

@@ -22,6 +22,14 @@ class ApiRecordStore implements RecordStore {
     api.activeCaseId = records.activeCaseId;
   }
 
+  /// The engine owns the execution record, so clearing is a request to it, not
+  /// a local edit. `save` deliberately sends case metadata only: a save that
+  /// simply omitted the executions changed nothing, and the next load restored
+  /// every one of them.
+  @override
+  Future<HistoryClearance> clearExecutionHistory() async =>
+      HistoryClearance.fromJson(await api.jsonRequest('/api/v1/history/clear', body: const {}));
+
   @override
   Future<String> location() async => 'Backend SQLite workspace (see Device investigations / storage)';
 }

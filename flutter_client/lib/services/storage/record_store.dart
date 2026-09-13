@@ -73,9 +73,39 @@ abstract class RecordStore {
   Future<WorkstationRecords> load();
   Future<void> save(WorkstationRecords records);
 
+  /// Deletes the ad-hoc command history and returns the store's own account of
+  /// what went and what stayed.
+  ///
+  /// This cannot be expressed as `save(records without executions)`: the engine
+  /// owns the execution record and accepts only case metadata from this client,
+  /// so a save that omitted them changed nothing and the next load brought them
+  /// all back.
+  Future<HistoryClearance> clearExecutionHistory();
+
   /// Absolute path of the store, shown in Settings so the analyst knows where
   /// their record of the session lives.
   Future<String> location();
+}
+
+/// What a store actually removed. `retained` is not a failure: an execution
+/// that belongs to an investigation is evidence and is kept deliberately.
+class HistoryClearance {
+  const HistoryClearance({this.deleted = 0, this.retained = 0, this.retainedReason});
+
+  final int deleted;
+  final int retained;
+  final String? retainedReason;
+
+  factory HistoryClearance.fromJson(Map<String, dynamic> json) => HistoryClearance(
+        deleted: asIntOrNull(json['deleted']) ?? 0,
+        retained: asIntOrNull(json['retained']) ?? 0,
+        retainedReason: asStringOrNull(json['retained_reason']),
+      );
+
+  String get summary => retained == 0
+      ? '$deleted execution records deleted.'
+      : '$deleted execution records deleted. $retained kept: '
+          '${retainedReason ?? 'they belong to an investigation.'}';
 }
 
 class FileRecordStore implements RecordStore {
@@ -95,6 +125,14 @@ class FileRecordStore implements RecordStore {
 
   @override
   Future<String> location() async => (await _resolveFile()).path;
+
+  @override
+  Future<HistoryClearance> clearExecutionHistory() async {
+    // This store owns the file outright, so clearing is a local rewrite.
+    final records = await load();
+    await save(records.copyWith(executions: const []));
+    return HistoryClearance(deleted: records.executions.length);
+  }
 
   @override
   Future<WorkstationRecords> load() async {
@@ -173,6 +211,13 @@ class InMemoryRecordStore implements RecordStore {
 
   @override
   Future<void> save(WorkstationRecords records) async => _records = records;
+
+  @override
+  Future<HistoryClearance> clearExecutionHistory() async {
+    final deleted = _records.executions.length;
+    _records = _records.copyWith(executions: const []);
+    return HistoryClearance(deleted: deleted);
+  }
 
   @override
   Future<String> location() async => '(in memory — not persisted)';

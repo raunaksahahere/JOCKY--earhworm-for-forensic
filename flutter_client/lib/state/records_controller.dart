@@ -176,10 +176,24 @@ class RecordsController extends Notifier<RecordsState> {
     await updateInvestigation(investigation.copyWith(notes: notes));
   }
 
-  /// Explicit, acknowledged destruction of the local record. Never automatic —
-  /// a corrupt store is reported, not silently replaced.
-  Future<void> clearExecutionHistory() =>
-      _commit(state.records.copyWith(executions: const []));
+  /// Explicit, acknowledged destruction of the command record. Never automatic
+  /// — a corrupt store is reported, not silently replaced.
+  ///
+  /// The store performs the deletion and reports what it removed, because the
+  /// engine keeps its own authoritative record and retains anything that
+  /// belongs to an investigation. Committing an empty execution list here
+  /// instead would leave the UI briefly blank and then refill on the next
+  /// refresh, which is exactly how this used to appear to do nothing.
+  Future<HistoryClearance> clearExecutionHistory() async {
+    try {
+      final clearance = await ref.read(recordsRepositoryProvider).clearExecutionHistory();
+      await refresh();
+      return clearance;
+    } on JockyFailure catch (failure) {
+      state = state.copyWith(storeFailure: failure);
+      rethrow;
+    }
+  }
 
   Future<void> resetAll() => _commit(WorkstationRecords.empty);
 

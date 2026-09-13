@@ -187,6 +187,12 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
             raise ServiceError("path is required")
         return service.store.migrate_ledger(path)
 
+    @app.post("/api/v1/history/clear")
+    def clear_history():
+        body()
+        from backend.workstation_view import clear_history as clear
+        return clear(service)
+
     @app.route("/api/v1/workstation", methods=["GET", "POST"])
     def workstation():
         from backend.workstation_view import view, save_metadata

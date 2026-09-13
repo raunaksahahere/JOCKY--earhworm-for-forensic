@@ -358,9 +358,11 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         backgroundColor: JockyColors.surface,
         title: const Text('Clear execution history?', style: TextStyle(fontSize: 15)),
         content: const Text(
-          'This deletes this workstation\'s record of every command it submitted, including '
-          'the engine reports held with them. The engine keeps no copy, so they cannot be '
-          'recovered. Cases and evidence lists are not affected.',
+          'This deletes the Command Center history — commands submitted outside an '
+          'investigation, and the reports issued for them. They cannot be recovered.\n\n'
+          'Executions that belong to an investigation are evidence and are kept, as are the '
+          'hash records used to tell whether a file changed between sightings. The engine '
+          'records that this clearance happened.',
           style: TextStyle(fontSize: 12.5, height: 1.5),
         ),
         actions: [
@@ -376,9 +378,22 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         ],
       ),
     );
-    if (confirmed ?? false) {
-      await ref.read(recordsControllerProvider.notifier).clearExecutionHistory();
-      if (mounted) setState(() => _selected = null);
+    if (!(confirmed ?? false)) return;
+    try {
+      final clearance =
+          await ref.read(recordsControllerProvider.notifier).clearExecutionHistory();
+      if (!mounted) return;
+      setState(() => _selected = null);
+      // Say what actually happened: "nothing was deleted because it is all
+      // evidence" is a result, not a silent no-op.
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text(clearance.summary)),
+      );
+    } on JockyFailure catch (failure) {
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(content: Text('History was not cleared: ${failure.message}')),
+      );
     }
   }
 

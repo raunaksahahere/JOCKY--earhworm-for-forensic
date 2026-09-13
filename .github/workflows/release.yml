@@ -14,7 +14,7 @@ on:
       version:
         description: 'Release version (x.y.z)'
         required: true
-        default: '0.4.0'
+        default: '0.4.1'
       targets:
         description: 'Which platforms to build'
         type: choice

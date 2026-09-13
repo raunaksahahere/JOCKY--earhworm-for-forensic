@@ -2,6 +2,41 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.4.1 — 2026-09-13
+
+### Fixed
+
+- **"Clear history" did nothing.** The button committed a record with an empty
+  execution list, but `ApiRecordStore.save` sends case metadata only — the
+  engine owns the execution record and deliberately ignores client-supplied
+  execution data — so nothing was deleted, and the refresh that followed
+  reloaded every execution from SQLite. The list blanked for an instant and
+  refilled.
+
+  Clearing is now a request to the engine, which performs the deletion and
+  reports what it did. `RecordStore` gained an explicit `clearExecutionHistory`
+  because "save a record without executions" cannot express deletion against an
+  authoritative engine; the file-backed and in-memory stores clear their own
+  data directly.
+
+- The confirmation dialog claimed "the engine keeps no copy, so they cannot be
+  recovered". The engine kept every copy and was authoritative. It now states
+  what is actually removed and what is kept.
+
+### Added
+
+- `POST /api/v1/history/clear` removes Command Center history — executions
+  belonging to no investigation, and the reports issued for them. Executions
+  that belong to an investigation, and any execution referenced by collected
+  evidence, are forensic records and are retained unconditionally: a
+  convenience button must not be able to delete evidence. Hash observations
+  survive with their execution link cleared, so the integrity ledger keeps
+  answering whether a file changed between sightings.
+- The clearance is recorded in the workspace. Unrecorded destruction has no
+  place in a forensic workstation.
+- The result is shown to the operator, so "nothing was deleted because it is
+  all evidence" reads as a result rather than another silent no-op.
+
 ## 0.4.0 — 2026-09-13
 
 Historical execution evidence. An investigation can now answer "what execution
