@@ -15,6 +15,11 @@ on:
         description: 'Release version (x.y.z)'
         required: true
         default: '0.3.0'
+      targets:
+        description: 'Which platforms to build'
+        type: choice
+        options: [linux, windows, both]
+        default: both
       publish:
         description: 'Create a GitHub Release with the artifacts'
         type: boolean
@@ -50,6 +55,9 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   linux:
+    # A tag builds everything; a manual run builds only what was asked for, so
+    # one platform can ship while the other is still being brought up.
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["linux","both"]'), inputs.targets)
     needs: version
     runs-on: ubuntu-latest
     steps:
@@ -116,6 +124,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["windows","both"]'), inputs.targets)
     needs: version
     runs-on: windows-latest
     steps:
@@ -180,7 +189,16 @@ jobs:
 
   publish:
     # Only for a v* tag, or an explicit request. Building never publishes.
-    if: github.ref_type == 'tag' || inputs.publish
+    #
+    # A skipped platform is not a failure: a Linux-only run still publishes its
+    # Debian package. A platform that was asked for and failed blocks the
+    # release, so a half-built release is never tagged as complete.
+    if: >-
+      !cancelled()
+      && (github.ref_type == 'tag' || inputs.publish)
+      && needs.linux.result != 'failure' && needs.linux.result != 'cancelled'
+      && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
+      && (needs.linux.result == 'success' || needs.windows.result == 'success')
     needs: [version, linux, windows]
     runs-on: ubuntu-latest
     permissions:
@@ -196,6 +214,7 @@ jobs:
           tag_name: v${{ needs.version.outputs.version }}
           name: JOCKY ${{ needs.version.outputs.version }}
           draft: true
+          fail_on_unmatched_files: false
           files: |
             artifacts/*.deb
             artifacts/*.exe
