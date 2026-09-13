@@ -10,6 +10,7 @@ from flask import Flask, request, send_file
 from werkzeug.exceptions import HTTPException
 
 from backend.pdf_report import render_pdf
+from backend.casework import CaseworkError
 from backend.service import ServiceError
 from backend.storage import StorageError
 from backend.versions import versions
@@ -48,7 +49,7 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
 
     @app.errorhandler(Exception)
     def failure(error):
-        if isinstance(error, ServiceError):
+        if isinstance(error, (ServiceError, CaseworkError)):
             status, code, message = error.status, error.code, str(error)
         elif isinstance(error, (sqlite3.Error, StorageError, OSError)):
             status, code, message = 503, "storage_unavailable", "Storage operation failed; committed records were preserved. Check available space and permissions."
@@ -210,6 +211,99 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
             return encrypt_file(data["path"], data["destination"], passphrase=data["passphrase"]), 201
         except ValueError as error:
             raise ServiceError(str(error)) from error
+
+
+    # --- cases, evidence sources, audit and notes --------------------------
+    # Kept separate from /investigations on purpose: an investigation is one
+    # collection run, a case is the enquiry that may contain several of them.
+
+    @app.route("/api/v1/cases", methods=["GET", "POST"])
+    def cases():
+        if request.method == "POST":
+            return service.casework.create_case(body()), 201
+        return {"items": service.casework.list_cases(status=request.args.get("status"))}
+
+    @app.get("/api/v1/cases/<case_id>")
+    def case_detail(case_id):
+        return service.casework.get_case(case_id)
+
+    @app.post("/api/v1/cases/<case_id>/close")
+    def case_close(case_id):
+        return service.casework.close_case(case_id, reopen=bool(body().get("reopen")))
+
+    @app.get("/api/v1/cases/<case_id>/investigations")
+    def case_investigations(case_id):
+        service.casework.get_case(case_id)
+        rows = service.store.rows(
+            "SELECT id FROM investigations WHERE case_id=? ORDER BY created_at DESC", (case_id,))
+        return {"items": [service.get_case(row["id"]) for row in rows]}
+
+    @app.route("/api/v1/evidence-sources", methods=["GET", "POST"])
+    def evidence_sources():
+        if request.method == "POST":
+            return service.casework.register_evidence(body()), 201
+        return {"items": service.casework.list_evidence(case_id=request.args.get("case_id"))}
+
+    @app.get("/api/v1/evidence-sources/<evidence_id>")
+    def evidence_source(evidence_id):
+        return service.casework.get_evidence(evidence_id)
+
+    @app.post("/api/v1/evidence-sources/<evidence_id>/verify")
+    def evidence_verify(evidence_id):
+        body()
+        return service.casework.verify_evidence(evidence_id)
+
+    @app.get("/api/v1/audit")
+    def audit():
+        return {"items": service.casework.audit_trail(case_id=request.args.get("case_id"),
+                                                      limit=int(request.args.get("limit", 1000))),
+                "note": ("The audit trail records what JOCKY and the investigator did. It is not "
+                         "evidence about the examined host.")}
+
+    @app.route("/api/v1/notes", methods=["GET", "POST"])
+    def notes():
+        if request.method == "POST":
+            return service.casework.add_note(body()), 201
+        return {"items": service.casework.list_notes(
+            case_id=request.args.get("case_id"), subject_type=request.args.get("subject_type"),
+            subject_id=request.args.get("subject_id"))}
+
+    @app.get("/api/v1/collection-sources")
+    def collection_sources():
+        from backend import plan_runner
+        return {"baseline": ["SYSTEM", "PROCESSES", "EXECUTION", "FILES"],
+                "selectable": [{"source": name,
+                                "description": plan_runner.SOURCE_DESCRIPTIONS[name],
+                                "needs_argument": name in plan_runner.NEEDS_ARGUMENT}
+                               for name in plan_runner.selectable_sources()]}
+
+    @app.get("/api/v1/investigations/<case_id>/program")
+    def investigation_program(case_id):
+        service.get_case(case_id)
+        rows = service.store.rows(
+            "SELECT * FROM investigation_programs WHERE investigation_id=? ORDER BY created_at",
+            (case_id,))
+        for row in rows:
+            for key in ("ir", "plan", "versions"):
+                row[key] = json.loads(row[key]) if row[key] else None
+        return {"items": rows}
+
+    @app.post("/api/v1/programs/compile")
+    def compile_investigation_program():
+        """Check a program and show its plan without collecting anything."""
+        from compiler.investigation import ProgramError, compile_program, describe
+        from compiler.plan import build_plan, describe_plan
+        data = body()
+        text = data.get("program")
+        if not isinstance(text, str) or not text.strip():
+            raise ServiceError("program is required")
+        try:
+            ir = compile_program(text)
+            plan = build_plan(ir, platform_name=data.get("platform"))
+        except ProgramError as error:
+            raise ServiceError(str(error), "program_error") from error
+        return {"ir": ir, "plan": plan, "explanation": describe(ir),
+                "plan_explanation": describe_plan(plan)}
 
     @app.post("/api/v1/shutdown")
     def stop():

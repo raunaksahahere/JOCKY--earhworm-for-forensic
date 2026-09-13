@@ -92,6 +92,32 @@ MIGRATIONS = {1: (
     "ALTER TABLE execution_events ADD COLUMN priority_score INTEGER",
     "CREATE INDEX execution_event_priority ON execution_events(investigation_id,investigator_priority)",
     "ALTER TABLE findings ADD COLUMN investigator_priority TEXT",
+), 5: (
+    # Cases hold investigations; an investigation still stands alone when no
+    # case is named, so existing rows keep working untouched.
+    "CREATE TABLE cases (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, closed_at TEXT, status TEXT NOT NULL DEFAULT 'open', examiner TEXT, reference TEXT, notes TEXT, metadata TEXT NOT NULL DEFAULT '{}')",
+    "CREATE INDEX case_status ON cases(status,created_at DESC)",
+    "ALTER TABLE investigations ADD COLUMN case_id TEXT REFERENCES cases(id)",
+    "CREATE INDEX investigation_case ON investigations(case_id)",
+    # Evidence sources are registered, hashed and verified before anything acts
+    # on them. A reprocessed copy is a new row, never an overwrite of the
+    # original: losing the first acquisition is exactly what must not happen.
+    "CREATE TABLE evidence_sources (id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id), reference TEXT NOT NULL, endpoint TEXT, source_type TEXT NOT NULL, description TEXT, original_path TEXT, stored_path TEXT, size_bytes INTEGER, sha256 TEXT, acquired_at TEXT NOT NULL, registered_at TEXT NOT NULL, collector TEXT, collector_version TEXT, acquisition_status TEXT NOT NULL, verification_state TEXT NOT NULL, supersedes TEXT REFERENCES evidence_sources(id), provenance TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}')",
+    "CREATE INDEX evidence_source_case ON evidence_sources(case_id,registered_at)",
+    "CREATE INDEX evidence_source_hash ON evidence_sources(sha256)",
+    "CREATE TABLE evidence_integrity_events (id INTEGER PRIMARY KEY, evidence_source_id TEXT NOT NULL REFERENCES evidence_sources(id), timestamp TEXT NOT NULL, event TEXT NOT NULL, expected_sha256 TEXT, observed_sha256 TEXT, outcome TEXT NOT NULL, detail TEXT)",
+    "CREATE INDEX integrity_event_source ON evidence_integrity_events(evidence_source_id,timestamp)",
+    # What the application and the investigator did, separate from what the
+    # host was observed doing.
+    "CREATE TABLE audit_events (id INTEGER PRIMARY KEY, timestamp TEXT NOT NULL, actor TEXT NOT NULL, action TEXT NOT NULL, object_type TEXT, object_id TEXT, case_id TEXT, investigation_id TEXT, outcome TEXT NOT NULL, detail TEXT)",
+    "CREATE INDEX audit_time ON audit_events(timestamp DESC)",
+    "CREATE INDEX audit_case ON audit_events(case_id,timestamp)",
+    # Investigator interpretation, kept apart from machine-derived evidence.
+    "CREATE TABLE notes (id TEXT PRIMARY KEY, case_id TEXT REFERENCES cases(id), investigation_id TEXT REFERENCES investigations(id), subject_type TEXT NOT NULL, subject_id TEXT, author TEXT, created_at TEXT NOT NULL, body TEXT NOT NULL)",
+    "CREATE INDEX note_subject ON notes(subject_type,subject_id)",
+    # What JOCKY actually ran, so an investigation can be reproduced.
+    "CREATE TABLE investigation_programs (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), created_at TEXT NOT NULL, source TEXT, ir_version INTEGER, ir TEXT, plan_version INTEGER, plan TEXT, platform TEXT, versions TEXT NOT NULL)",
+    "CREATE INDEX program_investigation ON investigation_programs(investigation_id)",
 )}
 
 

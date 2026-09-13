@@ -14,6 +14,7 @@ from analysis import hashing
 from analysis.activity import assign_references, build_activity
 from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
 from analysis.correlation import correlate
+from analysis.detections import detect
 from analysis.execution_history import collect_execution_history
 from analysis.execution_model import CollectionWindow
 from analysis.files import list_files
@@ -21,9 +22,13 @@ from analysis.system import get_system_info
 from analysis.threads import build_threads
 from analysis.timeline import build_significant_events, build_timeline
 from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, process_snapshot
+from backend import plan_runner
+from backend.casework import Casework
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
+from compiler.investigation import IR_VERSION, ProgramError, compile_program, describe
 from compiler.parser import parse_validated_command
+from compiler.plan import PLAN_VERSION, build_plan
 from communication.dispatcher import execute_command
 from reports.report import create_report
 
@@ -44,6 +49,7 @@ class ServiceError(ValueError):
 class Workstation:
     def __init__(self, store):
         self.store = store
+        self.casework = Casework(store)
         self.queue = queue.Queue(maxsize=8)
         self.cancel_events = {}
         self.stopping = threading.Event()
@@ -89,6 +95,9 @@ class Workstation:
         with self.store.transaction() as db:
             db.execute("INSERT INTO investigations(id,title,created_at,status,metadata) VALUES (?,?,?,?,?)", (case_id, title.strip(), now(), "created", encode(metadata)))
             db.execute("INSERT INTO transitions(investigation_id,state,timestamp) VALUES (?,?,?)", (case_id, "created", now()))
+            self.casework.audit("investigation.created", object_type="investigation",
+                                object_id=case_id, investigation_id=case_id,
+                                case_id=data.get("case_id"), db=db)
         return self.get_case(case_id)
 
     def get_case(self, case_id):
@@ -156,6 +165,13 @@ class Workstation:
                 db.execute("UPDATE investigations SET status='collecting',started_at=? WHERE id=?", (now(), case_id))
                 db.execute("INSERT INTO transitions(investigation_id,state,timestamp,detail) VALUES (?,?,?,?)", (case_id, "collecting", now(), "Queued for local collector"))
             self.cancel_events[case_id] = threading.Event()
+            self.casework.audit(
+                "collection.requested", object_type="investigation", object_id=case_id,
+                investigation_id=case_id,
+                detail={"path_count": len(paths), "window_hours": options["window_hours"],
+                        "sources": [task["source"] for task
+                                    in ((options.get("program") or {}).get("plan") or {}).get("tasks", [])],
+                        "include_command_lines": options["include_command_lines"]})
             self.queue.put_nowait((self._collect, (case_id, paths, options)))
         return self.get_case(case_id)
 
@@ -176,8 +192,55 @@ class Workstation:
         include = data.get("include_command_lines", False)
         if not isinstance(include, bool):
             raise ServiceError("include_command_lines must be true or false")
-        return {"window_hours": window.requested_hours, "max_processes": maximum,
-                "include_command_lines": include}
+        options = {"window_hours": window.requested_hours, "max_processes": maximum,
+                   "include_command_lines": include}
+        options["program"] = Workstation._resolve_program(data, window.requested_hours)
+        return options
+
+    @staticmethod
+    def _resolve_program(data, window_hours):
+        """The investigation program this collection will run.
+
+        An investigator may write one, or may simply tick extra sources in the
+        client. Either way a program text is what gets compiled, stored and
+        replayed, so a collection driven from the UI is exactly as reproducible
+        as one driven from the language.
+        """
+        source_text = data.get("program")
+        if source_text is not None and not isinstance(source_text, str):
+            raise ServiceError("program must be JOCKY investigation language text")
+        if not source_text:
+            selected = data.get("sources") or []
+            if not isinstance(selected, list) or any(not isinstance(name, str) for name in selected):
+                raise ServiceError("sources must be a list of source names")
+            available = set(plan_runner.selectable_sources())
+            unknown = [name for name in selected if name.upper() not in available]
+            if unknown:
+                raise ServiceError(
+                    f"Unknown collection source(s): {', '.join(sorted(unknown))}. "
+                    f"This build collects {', '.join(sorted(available))}.")
+            if not selected:
+                return None
+            lines = [f'CASE "{data.get("title") or "collection"}"', 'TARGET "localhost"',
+                     f"WINDOW LAST {int(window_hours or CollectionWindow.DEFAULT_HOURS)} HOURS"]
+            for name in selected:
+                name = name.upper()
+                if name == "MEMORY":
+                    image = data.get("memory_image")
+                    if not isinstance(image, str) or not os.path.isabs(image):
+                        raise ServiceError("Collecting MEMORY needs memory_image: an absolute path "
+                                           "to an image to analyse. JOCKY does not acquire memory.")
+                    lines.append(f'COLLECT MEMORY FROM "{image}"')
+                else:
+                    lines.append(f"COLLECT {name}")
+            lines.append("REPORT SUMMARY")
+            source_text = "\n".join(lines) + "\n"
+        try:
+            ir = compile_program(source_text)
+            plan = build_plan(ir)
+        except ProgramError as error:
+            raise ServiceError(str(error), "program_error") from error
+        return {"source": source_text, "ir": ir, "plan": plan}
 
     def cancel(self, case_id):
         case = self.get_case(case_id)
@@ -313,6 +376,10 @@ class Workstation:
             db.execute("UPDATE investigations SET status=?,completed_at=? WHERE id=?", (status, completed, case_id))
             db.execute("INSERT INTO transitions(investigation_id,state,timestamp,detail) VALUES (?,?,?,?)", (case_id, status, completed, limitation))
             db.execute("INSERT INTO reports VALUES (?,?,NULL,?,?,?)", (report["report_id"], case_id, REPORT_SCHEMA_VERSION, report["created_at"], encode(report)))
+            self.casework.audit("collection.finished", object_type="investigation",
+                                object_id=case_id, investigation_id=case_id,
+                                outcome=status, detail={"report_id": report["report_id"],
+                                                        "limitation": limitation}, db=db)
 
     def _collect(self, case_id, paths, options=None):
         options = options or {"window_hours": None, "max_processes": DEFAULT_MAX_PROCESSES,
@@ -320,6 +387,7 @@ class Workstation:
         event = self.cancel_events[case_id]
         failures, incomplete = 0, False
         try:
+            self._record_program(case_id, options.get("program"))
             if event.is_set():
                 self._finalize(case_id, "cancelled", "Collection cancelled before observations started")
                 return
@@ -381,6 +449,22 @@ class Workstation:
                 {"artifacts": selected, "statistics": {"selected_path_count": len(selected)}, "warnings": []},
                 referenced)
 
+            # Sources the investigation program asked for beyond the baseline.
+            # Each runs as its own evidence step, so one unavailable source is a
+            # named gap in the report rather than a failed investigation.
+            supplementary = {}
+            for entry in plan_runner.runnable_tasks((options.get("program") or {}).get("plan") or {}):
+                if event.is_set():
+                    break
+                state, result, evidence_id = self._step(
+                    case_id, entry["action"],
+                    lambda entry=entry: plan_runner.call(entry, options=options, cancel=event),
+                    entry["source_description"])
+                failures += state == "failed"
+                incomplete |= result.get("complete") is False
+                results.append((entry["action"], result, evidence_id))
+                supplementary[entry["action"]] = result
+
             self.transition(case_id, "analyzing")
             evidence_ids = {action: evidence_id for action, _result, evidence_id in results}
             # Short, stable identifiers first: findings cite them, the report
@@ -388,6 +472,8 @@ class Workstation:
             assign_references(execution.get("events", []) or [],
                               artifacts=artifacts.get("artifacts", []) or [])
             correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
+            correlation["findings"].extend(
+                detect(drivers=supplementary.get("DRIVERS"), memory=supplementary.get("MEMORY")))
             activity = build_activity(execution.get("events", []) or [],
                                       artifacts=artifacts.get("artifacts", []) or [])
             self._persist_analysis(case_id, execution, artifacts, correlation, processes,
@@ -405,6 +491,24 @@ class Workstation:
             logging.exception("Investigation collection failed")
         finally:
             self.cancel_events.pop(case_id, None)
+
+    def _record_program(self, case_id, program):
+        """Store the program, IR and plan that drove this collection.
+
+        This is what makes a collection repeatable by someone else: the exact
+        text, the compiled intermediate form, the platform plan and the version
+        of every component that produced them.
+        """
+        if not program:
+            return
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO investigation_programs"
+                " (id,investigation_id,created_at,source,ir_version,ir,plan_version,plan,platform,versions)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (identifier(), case_id, now(), program["source"], IR_VERSION,
+                 encode(program["ir"]), PLAN_VERSION, encode(program["plan"]),
+                 program["plan"]["platform"], encode(versions())))
 
     def _evidence_payload(self, case_id, action):
         """The payload of the most recent evidence record for one step."""
