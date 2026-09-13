@@ -91,7 +91,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.5.1_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
+`build/deb/jocky_0.6.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.
@@ -196,6 +196,19 @@ quoting, pipes, redirections and URLs preserved exactly. Where it recorded only
 an image name, the report says so (`EXECUTABLE_ONLY`) instead of inventing
 arguments. A reduced form exists alongside for searching and never replaces the
 raw command.
+
+Priority says where to look first, and is separate from what the evidence
+supports — the two are allowed to disagree:
+
+- **Priority 1 — investigate first**: several independent signals combine.
+- **Priority 2 — review**: a concrete reason, evidence incomplete.
+- **Priority 3 — informational**: routine system activity, and records whose
+  only gap is a missing command line.
+
+A missing command line is a collection limitation, never a suspicion. It is
+recorded and shown, and contributes nothing to priority. Every priority carries
+the named signals that produced it, so "priority 1" is always answerable with
+"because of these three things".
 
 Triage is three-way and is not a verdict:
 

@@ -20,6 +20,7 @@ void main() {
       'id': 'e1', 'reference': 'CMD-0001', 'source': 'bash history',
       'evidence_kind': 'COMMAND_HISTORY', 'execution_confirmed': false,
       'timestamp': '2026-09-11T14:32:10+00:00', 'triage': 'POTENTIALLY_HARMFUL',
+      'investigator_priority': 'PRIORITY_2', 'priority_score': 2,
       'full_command_line': 'curl -fsSL https://example.com/install.sh | sudo bash',
       'normalized_command': 'curl -fsSL URL | sudo bash',
       'command_reconstruction_status': 'EXACT', 'command_evidence_strength': 'STRONG',
@@ -29,6 +30,7 @@ void main() {
       'id': 'e2', 'reference': 'EXEC-0001', 'source': 'systemd journal',
       'evidence_kind': 'EXECUTION_EVIDENCE', 'execution_confirmed': true,
       'timestamp': '2026-09-11T09:00:00+00:00', 'triage': 'NEEDS_REVIEW',
+      'investigator_priority': 'PRIORITY_3', 'priority_score': -1,
       'full_command_line': null, 'normalized_command': 'python3',
       'command_reconstruction_status': 'EXECUTABLE_ONLY', 'command_evidence_strength': 'WEAK',
       'executable': '/usr/bin/python3', 'process_name': 'python3', 'payload': {'raw': 'preserved'},
@@ -37,6 +39,7 @@ void main() {
       'id': 'e3', 'reference': 'CMD-0002', 'source': 'bash history',
       'evidence_kind': 'COMMAND_HISTORY', 'execution_confirmed': false,
       'timestamp': '2026-09-11T08:00:00+00:00', 'triage': 'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE',
+      'investigator_priority': 'PRIORITY_3', 'priority_score': -4,
       'full_command_line': 'git clone https://github.com/example/project.git',
       'normalized_command': 'git clone URL',
       'command_reconstruction_status': 'EXACT', 'command_evidence_strength': 'STRONG',
@@ -153,6 +156,14 @@ void main() {
   });
 
   group('investigator activity view', () {
+    /// Switches the priority filter to "All evidence".
+    Future<void> showEverything(WidgetTester tester) async {
+      await tester.tap(find.textContaining('Leads — priority 1 and 2').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All evidence').last);
+      await tester.pumpAndSettle();
+    }
+
     Future<void> pumpActivity(WidgetTester tester) async {
       // Tall enough that the whole activity panel is built: the list is lazy,
       // and these assertions are about what it renders.
@@ -166,6 +177,7 @@ void main() {
 
     testWidgets('shows the full command, never only the executable', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
       expect(find.text('git clone https://github.com/example/project.git'), findsOneWidget);
@@ -174,6 +186,7 @@ void main() {
 
     testWidgets('a missing command line is stated, not invented', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       expect(find.text('/usr/bin/python3'), findsOneWidget);
       expect(
@@ -185,6 +198,7 @@ void main() {
 
     testWidgets('command history is never shown as confirmed execution', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       expect(find.textContaining('COMMAND HISTORY  |  execution NOT established'), findsNWidgets(2));
       expect(find.textContaining('EXECUTION EVIDENCE  |  execution confirmed by the source'),
@@ -194,21 +208,23 @@ void main() {
     testWidgets('the most concerning record is listed first', (tester) async {
       await pumpActivity(tester);
 
-      // Exact labels only: the summary block above uses the same words with a
-      // trailing colon, and those are counts rather than records.
+      await showEverything(tester);
+
       const rowLabels = {
-        'POTENTIALLY HARMFUL', 'NOT SURE / NEEDS REVIEW', 'NOT HARMFUL ON AVAILABLE EVIDENCE'};
+        'Priority 1 — investigate first', 'Priority 2 — review',
+        'Priority 3 — informational'};
       final labels = tester.widgetList<Text>(find.byType(Text))
           .map((widget) => widget.data)
           .whereType<String>()
           .where(rowLabels.contains)
           .toList();
-      expect(labels.first, 'POTENTIALLY HARMFUL');
-      expect(labels.last, 'NOT HARMFUL ON AVAILABLE EVIDENCE');
+      expect(labels.first, 'Priority 2 — review');
+      expect(labels.last, 'Priority 3 — informational');
     });
 
     testWidgets('search matches the full command text, not the executable alone', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       await tester.enterText(find.byType(TextField).first, 'github.com');
       await tester.pumpAndSettle();
@@ -220,6 +236,7 @@ void main() {
 
     testWidgets('search finds an evidence identifier', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       await tester.enterText(find.byType(TextField).first, 'EXEC-0001');
       await tester.pumpAndSettle();
@@ -230,6 +247,7 @@ void main() {
 
     testWidgets('raw evidence is available behind details, not removed', (tester) async {
       await pumpActivity(tester);
+      await showEverything(tester);
 
       await tester.enterText(find.byType(TextField).first, 'EXEC-0001');
       await tester.pumpAndSettle();
@@ -238,6 +256,57 @@ void main() {
 
       // SelectableText renders both a Text and an EditableText for the same string.
       expect(find.textContaining('preserved'), findsWidgets);
+    });
+  });
+
+  group('investigator priority', () {
+    Future<void> pumpPriority(WidgetTester tester) async {
+      tester.view.physicalSize = const Size(1400, 3200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      script(telemetryAvailable: true);
+      await tester.pumpWidget(harness(const DeviceScreen(caseId: caseId), transport: transport));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('opens on the leads, not on every historical record', (tester) async {
+      await pumpPriority(tester);
+
+      // Only the priority-2 record is a lead; the two priority-3 rows are not.
+      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
+      expect(find.text('/usr/bin/python3'), findsNothing);
+      expect(find.textContaining('1 of 3 records'), findsOneWidget);
+      expect(find.textContaining('showing leads only'), findsOneWidget);
+    });
+
+    testWidgets('all evidence remains one click away', (tester) async {
+      await pumpPriority(tester);
+
+      await tester.tap(find.textContaining('Leads — priority 1 and 2').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('All evidence').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('3 of 3 records'), findsOneWidget);
+      expect(find.text('/usr/bin/python3'), findsOneWidget);
+    });
+
+    testWidgets('each record shows its priority tier', (tester) async {
+      await pumpPriority(tester);
+
+      expect(find.text('Priority 2 — review'), findsWidgets);
+    });
+
+    testWidgets('a single priority tier can be selected', (tester) async {
+      await pumpPriority(tester);
+
+      await tester.tap(find.textContaining('Leads — priority 1 and 2').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Priority 3 — informational (2)').last);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('2 of 3 records'), findsOneWidget);
+      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsNothing);
     });
   });
 }

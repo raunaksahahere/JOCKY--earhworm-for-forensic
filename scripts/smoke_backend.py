@@ -57,7 +57,20 @@ def smoke(command, workspace):
         findings = request(session, f"/api/v1/investigations/{case['id']}/findings")['items']
         event_timeline = request(session, f"/api/v1/investigations/{case['id']}/event-timeline")['items']
         stored = request(session, f"/api/v1/investigations/{case['id']}/reports")['items'][-1]['payload']
-        assert stored['schema_version'] == 4, stored['schema_version']
+        assert stored['schema_version'] >= 4, stored['schema_version']
+        # Priority must be present, explainable and separate from classification.
+        priorities = stored['triage']['priorities']
+        assert set(priorities) == {'PRIORITY_1', 'PRIORITY_2', 'PRIORITY_3'}, priorities
+        for lead in stored['leads']:
+            classification = lead['classification']
+            assert classification['investigator_priority'] in ('PRIORITY_1', 'PRIORITY_2')
+            assert classification['why'], 'a lead must say why it is ranked where it is'
+            assert lead['records'], 'a lead must cite the records behind it'
+        # Missing arguments are a limitation, never a concern signal.
+        for group in stored['activity']['groups']:
+            if group['command_reconstruction_status'] in ('EXECUTABLE_ONLY', 'NOT_AVAILABLE'):
+                assert all(signal['weight'] <= 0 or not signal['name'].startswith(('remote_', 'download_'))
+                           for signal in group['classification']['signals'])
         assert stored['collection_window']['bounded'] is True
         assert stored['appendix_process_listing'], 'the process listing must survive in the appendix'
         # Counts must be named for what they are, and command history must never
@@ -99,7 +112,11 @@ def smoke(command, workspace):
                           'pdf_bytes':len(pdf),'historical_telemetry':telemetry,
                           'execution_events':len(history),'artifacts':len(artifacts),
                           'findings':len(findings),'timeline_entries':len(event_timeline),
-                          'record_counts':counts,'triage':triage,
+                          'record_counts':counts,'triage':triage,'priorities':priorities,
+                          'leads':[{'lead':lead.get('lead_id'),
+                                    'priority':lead['classification']['investigator_priority'],
+                                    'command':(lead.get('full_command_line') or lead.get('executable'))[:70]}
+                                   for lead in stored['leads']],
                           'longest_command':max((len(e['full_command_line'] or '') for e in history), default=0),
                           'sources':{source['name']: source['status'] for source in sources},
                           'workspace':str(workspace)}))

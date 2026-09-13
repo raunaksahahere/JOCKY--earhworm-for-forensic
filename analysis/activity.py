@@ -16,7 +16,12 @@ from __future__ import annotations
 from .execution_model import (
     COMMAND_HISTORY, EXECUTION_EVIDENCE, SESSION_EVENT,
 )
-from .triage import NEEDS_REVIEW, POTENTIALLY_HARMFUL, PRIORITY, classify_event, summarize
+from .triage import (
+    NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY, PRIORITY_1, PRIORITY_2,
+    PRIORITY_3, PRIORITY_LABELS, PRIORITY_ORDER, classify_event, summarize,
+)
+
+MAX_LEADS = 10
 
 REFERENCE_PREFIX = {
     EXECUTION_EVIDENCE: "EXEC",
@@ -66,12 +71,28 @@ def _group_key(event):
 
 
 def build_activity(events, *, artifacts=()) -> dict:
-    """Classify, group and rank the collected activity."""
+    """Classify, group and rank the collected activity.
+
+    Corroboration is computed first, across the whole collection, because how
+    many independent sources named an executable is a property of the evidence
+    set rather than of any one record.
+    """
     by_path = {record["path"]: record for record in artifacts}
+    sources_by_image = {}
+    for event in events:
+        image = event.get("executable")
+        if image:
+            sources_by_image.setdefault(image, set()).add(event.get("source"))
     groups = {}
 
     for event in events:
-        classification = classify_event(event, artifacts_by_path=by_path)
+        image = event.get("executable")
+        classification = classify_event(
+            event,
+            artifacts_by_path=by_path,
+            source_count=len(sources_by_image.get(image, ())) or 1,
+            correlated_artifact=by_path.get(image) if image else None,
+        )
         key = _group_key(event)
         group = groups.get(key)
         if group is None:
@@ -81,6 +102,7 @@ def build_activity(events, *, artifacts=()) -> dict:
                 "normalized_command": event.get("normalized_command"),
                 "command_reconstruction_status": event.get("command_reconstruction_status"),
                 "command_evidence_strength": event.get("command_evidence_strength"),
+                "lead_id": None,
                 "executable": event.get("executable"),
                 "process_name": event.get("process_name"),
                 "execution_confirmed": bool(event.get("execution_confirmed")),
@@ -115,16 +137,22 @@ def build_activity(events, *, artifacts=()) -> dict:
             # grouping can never be mistaken for losing one.
             "full_command_line": event.get("full_command_line"),
         })
-        # The strongest classification in a group wins: one concerning instance
-        # is not cancelled out by routine repetitions of the same text.
-        if classification.priority < PRIORITY[group["classification"]["category"]]:
-            group["classification"] = classification.to_dict()
+        # The most urgent instance in a group wins: one concerning occurrence is
+        # not cancelled out by routine repetitions of the same text.
+        current = group["classification"]
+        candidate = classification.to_dict()
+        if (candidate["priority_rank"], candidate["priority"]) < (
+                current["priority_rank"], current["priority"]):
+            group["classification"] = candidate
 
     ranked = sorted(
         groups.values(),
         key=lambda group: (
+            # Investigator priority first: what to look at, before what it is.
+            group["classification"]["priority_rank"],
+            -group["classification"]["score"],
             group["classification"]["priority"],
-            # Confirmed execution outranks command history at equal concern.
+            # Confirmed execution outranks command history at equal urgency.
             0 if group["execution_confirmed"] else 1,
             # Then the most recent, undated last.
             group["last_seen"] is None,
@@ -132,17 +160,101 @@ def build_activity(events, *, artifacts=()) -> dict:
         ),
     )
 
-    classifications = [group["classification"] for group in ranked]
+    leads = [group for group in ranked
+             if group["classification"]["investigator_priority"] in {PRIORITY_1, PRIORITY_2}]
+    for index, group in enumerate(leads[:MAX_LEADS], start=1):
+        group["lead_id"] = f"LEAD-{index:03d}"
+
     return {
         "groups": ranked,
         "group_count": len(ranked),
         "record_count": sum(group["occurrences"] for group in ranked),
         "highlights": ranked[:MAX_HIGHLIGHTED_GROUPS],
+        # The investigator's first actionable view.
+        "leads": leads[:MAX_LEADS],
+        "lead_count": len(leads),
+        "by_priority": {
+            PRIORITY_1: [g for g in ranked if g["classification"]["investigator_priority"] == PRIORITY_1],
+            PRIORITY_2: [g for g in ranked if g["classification"]["investigator_priority"] == PRIORITY_2],
+            PRIORITY_3: [g for g in ranked if g["classification"]["investigator_priority"] == PRIORITY_3],
+        },
         "triage": summarize_groups(ranked),
         "counts_by_kind": _counts_by_kind(ranked),
+        "review_reasons": summarize_review_reasons(ranked),
+        "routine_summary": summarize_routine(ranked),
         "note": ("Repeated identical activity is shown once with an occurrence count. Every "
                  "individual record keeps its own identifier, timestamp and source, and all of "
                  "them remain in the investigation database and the JSON export."),
+    }
+
+
+#: Why a group is uncertain, in the investigator's terms. Ordered: the first
+#: matching reason is the one reported, so each group is counted once.
+_REVIEW_REASONS = (
+    ("command_history_only",
+     "Command recorded in history, execution not established",
+     lambda group: group["evidence_kind"] == "COMMAND_HISTORY"),
+    ("arguments_unavailable",
+     "Execution confirmed, but the source did not record the arguments",
+     lambda group: group["execution_confirmed"]
+     and group.get("command_reconstruction_status") in {"EXECUTABLE_ONLY", "NOT_AVAILABLE"}),
+    ("unusual_path",
+     "Image runs from a writable or unusual location",
+     lambda group: any(signal["name"] == "execution_from_writable_location"
+                       for signal in group["classification"]["signals"])),
+    ("interpreter_context",
+     "Interpreter used without enough context to say what it ran",
+     lambda group: any(signal["name"] in {"remote_content_to_interpreter", "encoded_powershell"}
+                       for signal in group["classification"]["signals"])),
+)
+
+
+def summarize_review_reasons(groups) -> list[dict]:
+    """Group the uncertain activity by why it is uncertain.
+
+    "820 records need review" tells an investigator nothing. Knowing that most
+    of them are confirmed executions whose arguments the source never captured
+    tells them where the gap is, and that it is a telemetry limit rather than a
+    pile of leads.
+    """
+    tally = {}
+    for group in groups:
+        if group["classification"]["category"] != NEEDS_REVIEW:
+            continue
+        for key, description, matches in _REVIEW_REASONS:
+            if matches(group):
+                entry = tally.setdefault(key, {"reason": key, "description": description,
+                                               "activities": 0, "records": 0, "examples": []})
+                break
+        else:
+            entry = tally.setdefault("unclassified",
+                                     {"reason": "unclassified",
+                                      "description": "Recorded, but no reason rule matched",
+                                      "activities": 0, "records": 0, "examples": []})
+        entry["activities"] += 1
+        entry["records"] += group["occurrences"]
+        if len(entry["examples"]) < 5:
+            entry["examples"].append(group.get("full_command_line")
+                                     or group.get("executable") or group.get("process_name"))
+    return sorted(tally.values(), key=lambda entry: -entry["records"])
+
+
+def summarize_routine(groups) -> dict:
+    """Ordinary activity, counted rather than printed."""
+    routine = [group for group in groups
+               if group["classification"]["category"] == NOT_HARMFUL
+               and group["classification"]["investigator_priority"] == PRIORITY_3]
+    examples = []
+    for group in routine:
+        name = group.get("process_name") or group.get("executable") or group.get("full_command_line")
+        if name and name not in examples and len(examples) < 12:
+            examples.append(name)
+    return {
+        "activities": len(routine),
+        "records": sum(group["occurrences"] for group in routine),
+        "examples": examples,
+        "note": ("No additional suspicious evidence was associated with these activities. Every "
+                 "record remains in the appendices and in the investigation database."),
     }
 
 
@@ -156,13 +268,20 @@ def _descending(stamp):
 def summarize_groups(groups) -> dict:
     """Triage counts over records, not groups: 87 routine runs are 87 records."""
     record_counts, group_counts = {}, {}
+    priority_records, priority_groups = {}, {}
     for group in groups:
         category = group["classification"]["category"]
+        priority = group["classification"]["investigator_priority"]
         record_counts[category] = record_counts.get(category, 0) + group["occurrences"]
         group_counts[category] = group_counts.get(category, 0) + 1
+        priority_records[priority] = priority_records.get(priority, 0) + group["occurrences"]
+        priority_groups[priority] = priority_groups.get(priority, 0) + 1
     summary = summarize([group["classification"] for group in groups])
     summary["counts"] = {key: record_counts.get(key, 0) for key in summary["counts"]}
     summary["distinct_activity"] = {key: group_counts.get(key, 0) for key in summary["counts"]}
+    summary["priorities"] = {key: priority_records.get(key, 0) for key in summary["priorities"]}
+    summary["distinct_by_priority"] = {key: priority_groups.get(key, 0)
+                                       for key in summary["priorities"]}
     return summary
 
 

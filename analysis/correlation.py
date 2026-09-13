@@ -14,7 +14,10 @@ from __future__ import annotations
 import os
 
 from .execution_model import AVAILABLE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED
-from .triage import NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY, LABELS
+from .triage import (
+    LABELS, NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY, PRIORITY_1,
+    PRIORITY_2, PRIORITY_3, PRIORITY_LABELS, PRIORITY_ORDER,
+)
 
 INFO, LOW, MEDIUM, HIGH = "info", "low", "medium", "high"
 
@@ -25,8 +28,25 @@ OBSERVED_DIRECTLY = "directly observed by the collector"
 QUALIFIED = "qualified: the underlying source has known limits"
 
 
+def _investigator_priority(triage, references, corroborated):
+    """Where a finding belongs in the queue.
+
+    A finding only reaches the investigate-first tier when the evidence behind
+    it is corroborated: the same conclusion supported by an execution record and
+    an artifact, rather than by one observation on its own.
+    """
+    if triage == NOT_HARMFUL:
+        return PRIORITY_3
+    kinds = {reference.get("kind") for reference in references}
+    if triage == POTENTIALLY_HARMFUL:
+        multi_source = len(kinds & {"execution_event", "artifact"}) > 1
+        return PRIORITY_1 if (multi_source and corroborated) else PRIORITY_2
+    return PRIORITY_2 if corroborated else PRIORITY_3
+
+
 def _finding(category, severity, title, explanation, *, confidence, classification, references,
-             triage=NEEDS_REVIEW, why=None):
+             triage=NEEDS_REVIEW, why=None, corroborated=False, action=None, unknowns=()):
+    priority = _investigator_priority(triage, references, corroborated)
     return {
         "category": category,
         "severity": severity,
@@ -36,10 +56,16 @@ def _finding(category, severity, title, explanation, *, confidence, classificati
         "classification": classification,
         "evidence_references": references,
         # Investigator triage, kept separate from severity: severity says how
-        # much it would matter, triage says what to do with it next.
+        # much it would matter, triage says what the evidence supports, and
+        # priority says where attention is worth spending.
         "triage": triage,
         "triage_label": LABELS[triage],
         "priority": PRIORITY[triage],
+        "investigator_priority": priority,
+        "priority_label": PRIORITY_LABELS[priority],
+        "priority_rank": PRIORITY_ORDER[priority],
+        "recommended_action": action,
+        "unknowns": list(unknowns),
         "why": why or explanation.split(". ")[0] + ".",
     }
 
@@ -70,7 +96,7 @@ def correlate(*, execution=None, artifacts=None, processes=None):
     findings.extend(_artifact_findings(events, by_path, sources_by_event, links))
     findings.extend(_indicator_findings(records))
     findings.extend(_integrity_findings(records))
-    findings.sort(key=lambda finding: finding["priority"])
+    findings.sort(key=lambda finding: (finding["priority_rank"], finding["priority"]))
 
     # Gaps in what could be collected are reported separately. A telemetry
     # source that was switched off is a limitation of the investigation, not an
@@ -86,6 +112,7 @@ def correlate(*, execution=None, artifacts=None, processes=None):
             "findings_by_severity": _count(findings, "severity"),
             "findings_by_category": _count(findings, "category"),
             "findings_by_triage": _count(findings, "triage"),
+            "findings_by_priority": _count(findings, "investigator_priority"),
             "limitation_count": len(limitations),
             "execution_events_with_artifact": sum(1 for link in links if link["artifact_present"]),
             "execution_events_without_artifact": sum(1 for link in links if not link["artifact_present"]),
@@ -129,6 +156,9 @@ def _artifact_findings(events, by_path, sources_by_event, links):
                  "temporary file being cleaned up, and it is also what removal of a program after use looks "
                  "like. The record alone does not distinguish between them."),
                 triage=NEEDS_REVIEW,
+                corroborated=len(sources_by_event.get(path, ())) > 1,
+                action="Check whether the file was removed by a package operation around that time.",
+                unknowns=("Why the file is absent, and whether it was ever the file that ran.",),
                 why=("Execution evidence names this path and nothing is there now. Routine "
                      "removal and deliberate cleanup look identical in this record."),
                 confidence=corroboration, classification="INFERRED",
@@ -148,6 +178,10 @@ def _artifact_findings(events, by_path, sources_by_event, links):
                  "build tools also run from these directories, so this is a reason to inspect the artifact, "
                  "not a conclusion about it."),
                 triage=POTENTIALLY_HARMFUL,
+                corroborated=bool(record.get("hash")) or len(sources_by_event.get(path, ())) > 1,
+                action=("Review the artifact at that path, its hash, and the execution records "
+                        "immediately before and after it."),
+                unknowns=("How the file arrived at that path.",),
                 why=(f"Ran from '{record['notable_location']}', a location any unprivileged "
                      "user can write to."),
                 confidence=OBSERVED_DIRECTLY, classification="INFERRED",
@@ -204,6 +238,9 @@ def _integrity_findings(records):
                  "recorded in this workstation's hash ledger. The change is established; its cause is not. "
                  "Routine updates produce the same result as tampering."),
                 triage=NEEDS_REVIEW,
+                corroborated=True,
+                action="Compare against the expected version of this software.",
+                unknowns=("What changed the file.",),
                 why="The file's bytes differ from the digest recorded earlier.",
                 confidence=OBSERVED_DIRECTLY, classification="OBSERVED",
                 references=[_reference("artifact", record["path"], hash=record.get("hash"),

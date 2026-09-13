@@ -225,9 +225,12 @@ class Workstation:
                                   transitions=self.related(case_id, "transitions"))
         with self.store.transaction() as db:
             triage_by_reference = {
-                record["reference"]: group["classification"]["category"]
+                record["reference"]: group["classification"]
                 for group in activity["groups"] for record in group["records"] if record.get("reference")
             }
+
+            def triage_of(reference, key, default=None):
+                return (triage_by_reference.get(reference) or {}).get(key, default)
             for event in execution.get("events", []) or []:
                 db.execute(
                     "INSERT INTO execution_events"
@@ -235,8 +238,8 @@ class Workstation:
                     "  process_name,executable,pid,parent_pid,account,classification,collection_status,"
                     "  payload,evidence_kind,full_command_line,normalized_command,"
                     "  command_reconstruction_status,command_evidence_strength,execution_confirmed,"
-                    "  reference,triage)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "  reference,triage,investigator_priority,priority_score)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier(), case_id, execution_evidence, event.get("source"),
                      event.get("source_record_id"), event.get("timestamp"), event.get("last_seen"),
                      event.get("process_name"), event.get("executable"), event.get("pid"),
@@ -245,7 +248,9 @@ class Workstation:
                      event.get("evidence_kind"), event.get("full_command_line"),
                      event.get("normalized_command"), event.get("command_reconstruction_status"),
                      event.get("command_evidence_strength"), 1 if event.get("execution_confirmed") else 0,
-                     event.get("reference"), triage_by_reference.get(event.get("reference"))))
+                     event.get("reference"), triage_of(event.get("reference"), "category"),
+                     triage_of(event.get("reference"), "investigator_priority"),
+                     triage_of(event.get("reference"), "score")))
             for record in artifacts.get("artifacts", []) or []:
                 db.execute(
                     "INSERT INTO artifact_observations"
@@ -260,11 +265,12 @@ class Workstation:
                 finding_id = identifier()
                 finding["reference"] = f"F-{index:04d}"
                 db.execute(
-                    "INSERT INTO findings (id,investigation_id,evidence_id,category,severity,title,explanation,classification,confidence,detail,triage,why,reference) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "INSERT INTO findings (id,investigation_id,evidence_id,category,severity,title,explanation,classification,confidence,detail,triage,why,reference,investigator_priority) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (finding_id, case_id, self._finding_evidence_id(finding, evidence_ids), finding["category"],
                      finding["severity"], finding["title"], finding["explanation"], finding["classification"],
                      finding["confidence"], encode(finding.get("evidence_references", [])),
-                     finding.get("triage"), finding.get("why"), finding["reference"]))
+                     finding.get("triage"), finding.get("why"), finding["reference"],
+                     finding.get("investigator_priority")))
                 for reference in finding.get("evidence_references", []):
                     db.execute(
                         "INSERT INTO finding_evidence (finding_id,investigation_id,kind,reference,detail) VALUES (?,?,?,?,?)",
@@ -444,8 +450,17 @@ class Workstation:
                     "collection_limitations": len(limitations),
                     "execution_confirmed_records": sum(
                         group["occurrences"] for group in activity["groups"] if group["execution_confirmed"]),
+                    "priority_1": activity["triage"]["priorities"].get("PRIORITY_1", 0),
+                    "priority_2": activity["triage"]["priorities"].get("PRIORITY_2", 0),
+                    "priority_3": activity["triage"]["priorities"].get("PRIORITY_3", 0),
+                    "leads": activity["lead_count"],
                 },
                 "triage": activity["triage"],
+                # The investigator's first actionable view, before any listing.
+                "leads": activity["leads"],
+                "lead_count": activity["lead_count"],
+                "review_reasons": activity["review_reasons"],
+                "routine_summary": activity["routine_summary"],
                 "activity": activity,
                 "historical_execution": {
                     "telemetry_available": bool(available),
@@ -493,6 +508,7 @@ class Workstation:
         report exists to prevent.
         """
         triage = activity["triage"]["counts"]
+        priorities = activity["triage"]["priorities"]
         basis = (("Historical execution evidence was collected from "
                   + ", ".join(source["name"] for source in available) + ".")
                  if available else
@@ -509,10 +525,14 @@ class Workstation:
             f"{activity['group_count']} distinct activities. "
             f"{confirmed} records come from a source that establishes execution; the remainder "
             "record what was entered or who was logged in, which is not the same thing. "
-            f"Triage identified {triage.get('POTENTIALLY_HARMFUL', 0)} records worth attention, "
-            f"{triage.get('NEEDS_REVIEW', 0)} that need an investigator's judgement and "
-            f"{triage.get('NOT_HARMFUL_ON_AVAILABLE_EVIDENCE', 0)} that show nothing of concern in "
-            "what was collected. "
+            f"{priorities.get('PRIORITY_1', 0)} records are ranked investigate-first and "
+            f"{priorities.get('PRIORITY_2', 0)} merit review; the remaining "
+            f"{priorities.get('PRIORITY_3', 0)} are informational, largely ordinary system "
+            "activity and commands recognised as routine. "
+            f"By what the evidence supports rather than urgency, {triage.get('POTENTIALLY_HARMFUL', 0)} "
+            f"records carry a concern signal, {triage.get('NEEDS_REVIEW', 0)} are uncertain and "
+            f"{triage.get('NOT_HARMFUL_ON_AVAILABLE_EVIDENCE', 0)} show nothing of concern in what "
+            "was collected. "
             f"{len(findings)} findings were raised against "
             f"{(processes.get('statistics', {}) or {}).get('processes_recorded', 0)} current processes "
             f"and {len(artifacts)} artifacts. "
@@ -520,7 +540,9 @@ class Workstation:
             f"{len([s for s in sources if s['status'] != 'AVAILABLE'])} telemetry sources that could "
             "not be read. "
             "Triage categories are not verdicts: 'not harmful based on available evidence' means "
-            "nothing in what was collected stood out, not that the activity was safe."
+            "nothing in what was collected stood out, not that the activity was safe. Missing "
+            "command-line arguments are recorded as a collection limitation, not as a reason for "
+            "suspicion."
         )
 
     @staticmethod

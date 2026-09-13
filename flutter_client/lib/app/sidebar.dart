@@ -65,20 +65,31 @@ class JockySidebar extends ConsumerWidget {
       padding: EdgeInsets.symmetric(horizontal: collapsed ? 10 : JockySpace.lg),
       child: Row(
         children: [
-          Container(
-            width: 26,
-            height: 26,
-            decoration: BoxDecoration(
-              border: Border.all(color: JockyColors.accent, width: 1.4),
-              borderRadius: BorderRadius.circular(JockyRadius.sm),
-            ),
-            alignment: Alignment.center,
-            child: const Text(
-              'J',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w800,
-                color: JockyColors.accent,
+          // The application mark. Falls back to the lettered badge if the
+          // asset cannot be loaded, so the rail is never left with a gap.
+          ClipRRect(
+            borderRadius: BorderRadius.circular(JockyRadius.sm),
+            child: Image.asset(
+              'assets/app_icon.png',
+              width: 26,
+              height: 26,
+              filterQuality: FilterQuality.medium,
+              errorBuilder: (context, error, stack) => Container(
+                width: 26,
+                height: 26,
+                decoration: BoxDecoration(
+                  border: Border.all(color: JockyColors.accent, width: 1.4),
+                  borderRadius: BorderRadius.circular(JockyRadius.sm),
+                ),
+                alignment: Alignment.center,
+                child: const Text(
+                  'J',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: JockyColors.accent,
+                  ),
+                ),
               ),
             ),
           ),

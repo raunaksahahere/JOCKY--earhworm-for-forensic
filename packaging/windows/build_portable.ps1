@@ -3,7 +3,7 @@
 # investigations to the workspace passed to launch_portable.ps1.
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
-$version = if ($env:JOCKY_VERSION) { $env:JOCKY_VERSION } else { '0.5.1' }
+$version = if ($env:JOCKY_VERSION) { $env:JOCKY_VERSION } else { '0.6.0' }
 if ($version -notmatch '^\d+\.\d+\.\d+$') { throw "Invalid release version: $version" }
 
 $bundle = Join-Path $root 'flutter_client\build\windows\x64\runner\Release'

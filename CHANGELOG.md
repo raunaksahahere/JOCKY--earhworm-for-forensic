@@ -2,6 +2,75 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.6.0 — 2026-09-13
+
+Signal-to-noise. The report was honest but hard to act on: 820 records sat in
+"needs review", most of them ordinary system daemons whose only problem was that
+the journal does not record their arguments.
+
+### Added
+
+- **Investigator priority**, separate from classification. Classification says
+  what the evidence supports; priority says where attention is worth spending.
+  The two are allowed to disagree, which is the whole point: an ordinary system
+  service can be honestly uncertain and still not be worth an investigator's
+  morning.
+  - **Priority 1 — investigate first**: several independent signals combine.
+  - **Priority 2 — review**: a concrete reason, with incomplete or
+    uncorroborated evidence.
+  - **Priority 3 — informational**: routine system and session activity, and
+    records whose only gap is a missing command line.
+- **Top investigative leads** opens the report: lead id, priority,
+  classification, the full command, whether execution was established, the
+  named reasons it is ranked there, what remains unknown, a conservative
+  suggested next step, and the evidence ids behind it.
+- An explainable priority score. Every record carries the named signals that
+  produced it — `remote_content_to_interpreter`, `execution_from_writable_location`,
+  `corroborated_across_sources`, `system_location`, `installer_shaped_source` —
+  with their weights. The report shows the reasons, never a bare number.
+- "What is uncertain, and why": the uncertain records grouped by reason, so
+  "527 need review" reads as "506 are commands entered in a shell with no
+  execution record, and 21 are confirmed executions whose arguments the source
+  never captured".
+- The application icon, installed at every hicolor size in the Debian package,
+  compiled into the Windows runner, and shown in the sidebar.
+
+### Changed
+
+- **Missing command-line arguments are a collection limitation, not a
+  suspicion.** They are recorded on the record, shown in the report, and
+  contribute nothing to priority. This alone moved several hundred ordinary
+  system processes out of the review queue.
+- Routine system context is recognised structurally rather than by an
+  allowlist: an image in a directory the OS packaging owns, run as a managed
+  systemd unit, with no concern signal. `/usr/local` and `/opt` are deliberately
+  excluded, because locally installed software is exactly what stays visible.
+  An interpreter is never automatically routine — what `python3` ran is the
+  question, and the record usually cannot answer it.
+- Fetch-and-run commands whose URL is shaped like a vendor install script are
+  ranked review rather than investigate-first. The pattern is still reported in
+  full, the classification is unchanged, and any corroborating signal lifts it
+  straight back up.
+- Corroboration raises priority: the same executable named by two independent
+  sources, or matched to an artifact on disk, outranks a single weak
+  observation.
+- The main report now runs executive summary, priority summary, top leads,
+  findings, then priority 1, 2 and 3, then what is uncertain and why. Routine
+  activity is summarised with a count and examples instead of listed.
+- The investigator view opens on priority 1 and 2. "All evidence" is one click
+  away, and nothing is hidden: the appendices and the database hold every record.
+- Schema 4 stores the priority and its score alongside the classification, so
+  the deterministic machine judgement is preserved separately and is never
+  overwritten.
+
+### Unchanged, deliberately
+
+Shell history is still not execution. A process snapshot is still a current
+observation. Missing telemetry is still not evidence of innocence. A filename is
+still not malware. "Not harmful based on available evidence" still means nothing
+in what was collected stood out, not that the activity was safe. Every raw
+record, evidence id and command string remains in SQLite and the JSON export.
+
 ## 0.5.1 — 2026-09-13
 
 ### Changed

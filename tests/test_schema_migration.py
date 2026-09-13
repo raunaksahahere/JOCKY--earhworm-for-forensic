@@ -38,7 +38,7 @@ def upgraded(tmp_path):
 def test_upgrade_reaches_the_current_version(upgraded):
     store, _case = upgraded
 
-    assert store.rows("PRAGMA user_version")[0]["user_version"] == DATABASE_SCHEMA_VERSION == 3
+    assert store.rows("PRAGMA user_version")[0]["user_version"] == DATABASE_SCHEMA_VERSION
 
 
 def test_existing_rows_survive_the_upgrade(upgraded):
@@ -70,7 +70,7 @@ def test_upgrade_is_idempotent(upgraded):
 
     again = Store(store.paths)
 
-    assert again.rows("PRAGMA user_version")[0]["user_version"] == 3
+    assert again.rows("PRAGMA user_version")[0]["user_version"] == DATABASE_SCHEMA_VERSION
     assert again.rows("SELECT id FROM investigations WHERE id=?", (case,))
 
 

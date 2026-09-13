@@ -32,12 +32,32 @@ TRIAGE_LABELS = {
     "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE": "NOT HARMFUL ON AVAILABLE EVIDENCE",
 }
 
+PRIORITY_LABELS = {
+    "PRIORITY_1": "Priority 1 — investigate first",
+    "PRIORITY_2": "Priority 2 — review",
+    "PRIORITY_3": "Priority 3 — informational",
+}
+
 EVIDENCE_LABELS = {
     "EXECUTION_EVIDENCE": "EXECUTION EVIDENCE",
     "COMMAND_HISTORY": "COMMAND HISTORY",
     "SESSION_EVENT": "SESSION EVENT",
 }
 FONT_ROOT = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+
+
+def _table(rows, widths):
+    table = Table(rows, colWidths=widths, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Jocky"),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#123f53")),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#123f53")),
+        ("GRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#c9d4dc")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    return table
 
 
 def render_pdf(report):
@@ -201,88 +221,139 @@ def render_pdf(report):
         for category, label in TRIAGE_LABELS.items():
             kv(label, triage_counts.get(category, 0))
 
-        # --- Page 2: triage summary ---------------------------------------
-        p("Triage summary", heading)
-        p("Triage categories are not verdicts. 'Not harmful based on available evidence' means "
-          "nothing in what was collected stood out; it is not a statement that the activity was safe.")
-        distinct = ((report.get("triage") or {}).get("distinct_activity") or {})
-        rows = [["Classification", "Records", "Distinct activity", "Priority"]]
-        for index, (category, label) in enumerate(TRIAGE_LABELS.items(), start=1):
-            rows.append([label, str(triage_counts.get(category, 0)),
-                         str(distinct.get(category, 0)), str(index)])
-        table = Table(rows, colWidths=[230, 70, 110, 60], hAlign="LEFT")
-        table.setStyle(TableStyle([
-            ("FONTNAME", (0, 0), (-1, -1), "Jocky"),
-            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#123f53")),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.6, colors.HexColor("#123f53")),
-            ("GRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#c9d4dc")),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-        ]))
-        story.append(table)
-        story.append(Spacer(1, 10))
+        # --- Page 2: priority summary -------------------------------------
+        p("Investigation priority summary", heading)
+        p("Priority is where attention is worth spending. It is separate from what the evidence "
+          "supports: an ordinary system service can be honestly uncertain and still not be worth "
+          "an investigator's morning.")
+        priorities = ((report.get("triage") or {}).get("priorities") or {})
+        distinct_priority = ((report.get("triage") or {}).get("distinct_by_priority") or {})
+        rows = [["Priority", "Records", "Distinct activity", "Meaning"]]
+        for key, meaning in (
+            ("PRIORITY_1", "Investigate first — multiple signals combine"),
+            ("PRIORITY_2", "Review — a concrete reason, evidence incomplete"),
+            ("PRIORITY_3", "Informational — routine or weak-signal activity"),
+        ):
+            rows.append([PRIORITY_LABELS[key], str(priorities.get(key, 0)),
+                         str(distinct_priority.get(key, 0)), meaning])
+        story.append(_table(rows, [110, 60, 95, 205]))
+        story.append(Spacer(1, 8))
 
+        distinct = ((report.get("triage") or {}).get("distinct_activity") or {})
+        rows = [["Classification", "Records", "Distinct activity"]]
+        for category, label in TRIAGE_LABELS.items():
+            rows.append([label, str(triage_counts.get(category, 0)),
+                         str(distinct.get(category, 0))])
+        story.append(_table(rows, [250, 105, 115]))
+        story.append(Spacer(1, 10))
+        p("Triage categories are not verdicts. 'Not harmful based on available evidence' means "
+          "nothing in what was collected stood out; it is not a statement that the activity was "
+          "safe. Missing command-line arguments are recorded as a collection limitation, never as "
+          "a reason for suspicion.")
+
+        # --- Top investigative leads --------------------------------------
+        p("Top investigative leads", heading)
+        leads = report.get("leads", []) or []
+        if not leads:
+            p("No activity in the collected evidence reached the review or investigate-first "
+              "tiers. This means no rule combined enough signals, not that the device is clear.")
+        for lead in leads:
+            classification = lead["classification"]
+            references = ", ".join(record["reference"] for record in lead["records"][:6]
+                                   if record.get("reference"))
+            if len(lead["records"]) > 6:
+                references += f", +{len(lead['records']) - 6} more"
+            p(f"{lead.get('lead_id') or 'LEAD'}   "
+              f"{PRIORITY_LABELS[classification['investigator_priority']].upper()}   "
+              f"{TRIAGE_LABELS.get(classification['category'], classification['category'])}", entry)
+            command = lead.get("full_command_line")
+            p(command or (lead.get("executable") or lead.get("process_name") or "unnamed process"), mono)
+            if not command:
+                p(f"Full command line: not available from collected evidence "
+                  f"({lead.get('command_reconstruction_status')})")
+            when = lead.get("last_seen") or "time not recorded by source"
+            repeats = f" (x{lead['occurrences']})" if lead["occurrences"] > 1 else ""
+            execution = ("CONFIRMED by " + ", ".join(lead.get("sources") or [])
+                         if lead["execution_confirmed"] else "NOT ESTABLISHED")
+            p(f"When: {when}{repeats}   Execution: {execution}")
+            p("Why this is ranked here:")
+            for why in classification.get("why", []):
+                p(f"   - {why}")
+            for note in classification.get("limitations", []):
+                p(f"   Limitation: {note}")
+            for unknown in classification.get("unknowns", []):
+                p(f"   Unknown: {unknown}")
+            if classification.get("recommended_action"):
+                p(f"Suggested next step: {classification['recommended_action']}")
+            p(f"Evidence: {references or 'not recorded'}")
+            rule()
+
+        # --- Findings -----------------------------------------------------
         p("Findings", heading)
         findings = report.get("findings", []) or []
-        # Lead with what an investigator has to act on. Corroboration and
-        # routine observations are real findings and are kept, but listing them
-        # first buries the ones that matter.
         notable = [finding for finding in findings
                    if finding.get("triage") != "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE"]
         reassuring = len(findings) - len(notable)
         if not findings:
-            p("No findings were raised. This means no rule matched the collected evidence, not that "
-              "the device is clear.")
+            p("No findings were raised. This means no rule matched the collected evidence, not "
+              "that the device is clear.")
         elif not notable:
             p("No finding requires attention or review. Every finding records corroboration or a "
               "routine observation.")
         for finding in notable[:MAX_MAIN_FINDINGS]:
             references = ", ".join(str(item.get("id")) for item in (finding.get("detail") or [])
                                    if isinstance(item, dict))
-            p(f"[{TRIAGE_LABELS.get(finding.get('triage'), finding.get('severity', '').upper())}] "
+            p(f"[{PRIORITY_LABELS.get(finding.get('investigator_priority'), '').upper()}] "
               f"{finding.get('reference') or ''}  {finding.get('title')}", entry)
             p(f"Why: {finding.get('why') or finding.get('explanation')}")
+            if finding.get("recommended_action"):
+                p(f"Suggested next step: {finding['recommended_action']}")
             p(f"Confidence: {finding.get('confidence')} | Classification: {finding.get('classification')}"
               + (f" | Evidence: {references}" if references else ""))
             rule()
         if len(notable) > MAX_MAIN_FINDINGS:
-            p(f"... {len(notable) - MAX_MAIN_FINDINGS} further findings needing attention are listed "
-              "in Appendix C.")
+            p(f"... {len(notable) - MAX_MAIN_FINDINGS} further findings needing attention are "
+              "listed in Appendix C.")
         if reassuring:
             p(f"{reassuring} further findings record corroboration or routine observations — the "
               "image named by the evidence was present and hashed, and nothing in the collected "
               "evidence stood out. They are listed in full in Appendix C.")
 
-        # --- Page 3: the activity that matters ----------------------------
-        attention = [group for group in groups
-                     if group["classification"]["category"] == "POTENTIALLY_HARMFUL"]
-        review = [group for group in groups
-                  if group["classification"]["category"] == "NEEDS_REVIEW"]
-        routine = [group for group in groups
-                   if group["classification"]["category"] == "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE"]
+        # --- Priority tiers ------------------------------------------------
+        by_priority = (activity.get("by_priority") or {})
+        activity_section(
+            "Priority 1 — investigate first", by_priority.get("PRIORITY_1", []),
+            limit=MAX_MAIN_ACTIVITY,
+            empty="No activity combined enough signals to rank investigate-first.",
+            note="Multiple independent signals combine on each of these.")
 
         activity_section(
-            "Activity requiring attention", attention, limit=MAX_MAIN_ACTIVITY,
-            empty="No activity in the collected evidence matched a concern rule.",
-            note="Each entry shows the command exactly as its source recorded it.")
+            "Priority 2 — review", by_priority.get("PRIORITY_2", []), limit=MAX_MAIN_REVIEW,
+            empty="No activity reached the review tier.",
+            note="A concrete reason for attention, with evidence that is incomplete or "
+                 "uncorroborated.")
 
-        activity_section(
-            "Activity needing review", review, limit=MAX_MAIN_REVIEW,
-            empty="No ambiguous activity was recorded.",
-            note="Recorded activity that is neither recognised as routine nor matched by a concern "
-                 "rule. Intent cannot be determined from the evidence alone.")
+        p("Priority 3 — informational", heading)
+        routine = report.get("routine_summary") or {}
+        informational = by_priority.get("PRIORITY_3", [])
+        p(f"{sum(group['occurrences'] for group in informational)} records across "
+          f"{len(informational)} distinct activities. These are ordinary system and session "
+          "activity, commands recognised as routine, and records whose only gap is that the "
+          "source did not capture arguments. Every one of them is in Appendix B and in the "
+          "investigation database.")
+        if routine.get("examples"):
+            p("Common examples: " + ", ".join(routine["examples"]))
 
-        p("Routine activity", heading)
-        if routine:
-            p(f"{sum(group['occurrences'] for group in routine)} records across "
-              f"{len(routine)} distinct activities were recognised as routine and are listed in "
-              "Appendix B. Nothing in the collected evidence identified them as concerning.")
-            for group in routine[:MAX_ROUTINE_PREVIEW]:
-                p(f"  {group.get('full_command_line') or group.get('executable') or group.get('process_name')}"
-                  f"  (x{group['occurrences']})")
-        else:
-            p("No activity was recognised as routine.")
+        # Why the uncertain records are uncertain, rather than a bare total.
+        p("What is uncertain, and why", heading)
+        reasons = report.get("review_reasons", []) or []
+        if not reasons:
+            p("No activity was left uncertain.")
+        for reason in reasons:
+            p(f"{reason['records']} records across {reason['activities']} activities: "
+              f"{reason['description']}")
+            if reason.get("examples"):
+                p("   e.g. " + "; ".join(str(example)[:70] for example in reason["examples"][:3]))
 
         # --- Evidence separated by what it proves --------------------------
         confirmed = [group for group in groups if group["evidence_kind"] == "EXECUTION_EVIDENCE"]

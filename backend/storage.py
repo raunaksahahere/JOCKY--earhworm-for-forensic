@@ -84,6 +84,14 @@ MIGRATIONS = {1: (
     # investigator's finding list is not padded with missing-telemetry notes.
     "CREATE TABLE collection_limitations (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), evidence_id TEXT REFERENCES evidence(id), category TEXT NOT NULL, severity TEXT NOT NULL, title TEXT NOT NULL, explanation TEXT NOT NULL, classification TEXT NOT NULL, detail TEXT)",
     "CREATE INDEX limitation_case ON collection_limitations(investigation_id)",
+), 4: (
+    # Investigator priority, kept separate from the classification so the two
+    # can disagree: an ordinary system service is honestly uncertain and still
+    # not worth an investigator's morning.
+    "ALTER TABLE execution_events ADD COLUMN investigator_priority TEXT",
+    "ALTER TABLE execution_events ADD COLUMN priority_score INTEGER",
+    "CREATE INDEX execution_event_priority ON execution_events(investigation_id,investigator_priority)",
+    "ALTER TABLE findings ADD COLUMN investigator_priority TEXT",
 )}
 
 

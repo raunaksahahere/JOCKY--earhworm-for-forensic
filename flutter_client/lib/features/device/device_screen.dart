@@ -26,6 +26,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   final _windowHours = TextEditingController(text: '168');
   final _activitySearch = TextEditingController();
   String _triageFilter = 'all';
+  // Opens on what deserves attention. "All evidence" is one click away and
+  // nothing is hidden -- the appendices and the database hold every record.
+  String _priorityFilter = 'leads';
   final Set<String> _expanded = {};
   final List<String> _paths = [];
   String? _error, _notice;
@@ -219,6 +222,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE': 'NOT HARMFUL ON AVAILABLE EVIDENCE',
   };
   static const _triageOrder = ['POTENTIALLY_HARMFUL', 'NEEDS_REVIEW', 'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE'];
+  static const _priorityLabels = {
+    'PRIORITY_1': 'Priority 1 — investigate first',
+    'PRIORITY_2': 'Priority 2 — review',
+    'PRIORITY_3': 'Priority 3 — informational',
+  };
+  static const _priorityOrder = ['PRIORITY_1', 'PRIORITY_2', 'PRIORITY_3'];
   static const _kindLabels = {
     'EXECUTION_EVIDENCE': 'EXECUTION EVIDENCE',
     'COMMAND_HISTORY': 'COMMAND HISTORY',
@@ -232,6 +241,13 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         _ => Colors.grey.shade600,
       };
 
+  Color _priorityColor(String? priority) => switch (priority) {
+        'PRIORITY_1' => Colors.red.shade700,
+        'PRIORITY_2' => Colors.orange.shade800,
+        'PRIORITY_3' => Colors.blueGrey.shade400,
+        _ => Colors.grey.shade600,
+      };
+
   /// Records matching the search box and the triage filter.
   ///
   /// Search runs over the whole command, its search form, the executable, the
@@ -240,6 +256,15 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   List<dynamic> get _filteredActivity {
     final needle = _activitySearch.text.trim().toLowerCase();
     final rows = _executionEvents.where((row) {
+      final priority = '${row['investigator_priority']}';
+      if (_priorityFilter == 'leads' &&
+          !(priority == 'PRIORITY_1' || priority == 'PRIORITY_2')) {
+        return false;
+      }
+      if (_priorityFilter != 'all' && _priorityFilter != 'leads' &&
+          priority != _priorityFilter) {
+        return false;
+      }
       if (_triageFilter != 'all' && row['triage'] != _triageFilter) return false;
       if (needle.isEmpty) return true;
       final haystack = [
@@ -248,11 +273,18 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       ].where((value) => value != null).join(' ').toLowerCase();
       return haystack.contains(needle);
     }).toList();
-    // Most concerning first, then most recent.
+    // Highest priority first, then the strongest score, then most recent.
+    int rank(dynamic row) {
+      final index = _priorityOrder.indexOf('${row['investigator_priority']}');
+      return index < 0 ? 99 : index;
+    }
+
     rows.sort((a, b) {
-      final left = _triageOrder.indexOf('${a['triage']}');
-      final right = _triageOrder.indexOf('${b['triage']}');
-      if (left != right) return (left < 0 ? 99 : left).compareTo(right < 0 ? 99 : right);
+      final byPriority = rank(a).compareTo(rank(b));
+      if (byPriority != 0) return byPriority;
+      final byScore =
+          ((b['priority_score'] ?? 0) as num).compareTo((a['priority_score'] ?? 0) as num);
+      if (byScore != 0) return byScore;
       return '${b['timestamp'] ?? ''}'.compareTo('${a['timestamp'] ?? ''}');
     });
     return rows;
@@ -261,9 +293,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   Widget _activityPanel() {
     final rows = _filteredActivity;
     final counts = <String, int>{};
+    final priorityCounts = <String, int>{};
     for (final row in _executionEvents) {
       counts['${row['triage']}'] = (counts['${row['triage']}'] ?? 0) + 1;
+      final priority = '${row['investigator_priority']}';
+      priorityCounts[priority] = (priorityCounts[priority] ?? 0) + 1;
     }
+    final leadCount =
+        (priorityCounts['PRIORITY_1'] ?? 0) + (priorityCounts['PRIORITY_2'] ?? 0);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -274,19 +311,42 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             'what was collected stood out — it is not a statement that the activity was safe.',
             style: TextStyle(fontSize: 12)),
           const SizedBox(height: 12),
-          Row(children: [
-            Expanded(child: TextField(
-              controller: _activitySearch,
-              onChanged: (_) => setState(() {}),
-              decoration: const InputDecoration(
-                labelText: 'Search commands, URLs, paths, users, sources or evidence IDs',
-                prefixIcon: Icon(Icons.search), isDense: true),
-            )),
-            const SizedBox(width: 12),
+          // Wraps rather than overflowing: three controls do not fit on one
+          // line at a narrow window width.
+          Wrap(spacing: 12, runSpacing: 8, crossAxisAlignment: WrapCrossAlignment.center,
+               children: [
+            ConstrainedBox(
+              constraints: const BoxConstraints(minWidth: 260, maxWidth: 460),
+              child: TextField(
+                controller: _activitySearch,
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(
+                  labelText: 'Search commands, URLs, paths, users, sources or evidence IDs',
+                  prefixIcon: Icon(Icons.search), isDense: true),
+              ),
+            ),
+            DropdownButton<String>(
+              value: _priorityFilter,
+              items: [
+                DropdownMenuItem(
+                  value: 'leads',
+                  child: Text('Leads — priority 1 and 2 ($leadCount)',
+                      style: const TextStyle(fontSize: 12)),
+                ),
+                for (final priority in _priorityOrder)
+                  DropdownMenuItem(
+                    value: priority,
+                    child: Text('${_priorityLabels[priority]} (${priorityCounts[priority] ?? 0})',
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+                const DropdownMenuItem(value: 'all', child: Text('All evidence')),
+              ],
+              onChanged: (value) => setState(() => _priorityFilter = value ?? 'leads'),
+            ),
             DropdownButton<String>(
               value: _triageFilter,
               items: [
-                const DropdownMenuItem(value: 'all', child: Text('All')),
+                const DropdownMenuItem(value: 'all', child: Text('Any classification')),
                 for (final category in _triageOrder)
                   DropdownMenuItem(
                     value: category,
@@ -298,7 +358,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             ),
           ]),
           const SizedBox(height: 8),
-          Text('${rows.length} of ${_executionEvents.length} records',
+          Text('${rows.length} of ${_executionEvents.length} records'
+               '${_priorityFilter == 'leads' ? ' — showing leads only; choose "All evidence" for everything' : ''}',
               style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 8),
           if (rows.isEmpty)
@@ -326,13 +387,17 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: _triageColor('${row['triage']}'), width: 3)),
+        border: Border(
+          left: BorderSide(color: _priorityColor('${row['investigator_priority']}'), width: 3)),
         color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Wrap(spacing: 10, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
-          Text(_triageLabels['${row['triage']}'] ?? 'UNCLASSIFIED',
+          Text(_priorityLabels['${row['investigator_priority']}'] ?? 'UNPRIORITISED',
               style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                  color: _priorityColor('${row['investigator_priority']}'))),
+          Text(_triageLabels['${row['triage']}'] ?? 'UNCLASSIFIED',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
                   color: _triageColor('${row['triage']}'))),
           Text('${row['timestamp'] ?? 'time not recorded by source'}',
               style: const TextStyle(fontSize: 11.5)),

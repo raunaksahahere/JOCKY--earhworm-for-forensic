@@ -4,7 +4,8 @@ import pytest
 from analysis.activity import assign_references, build_activity, search_activity
 from analysis.execution_model import COMMAND_HISTORY, EXECUTION_EVIDENCE, SESSION_EVENT
 from analysis.triage import (
-    LABELS, NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, classify_event,
+    LABELS, NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY_1, PRIORITY_2,
+    PRIORITY_3, classify_event,
 )
 
 
@@ -61,7 +62,9 @@ def test_a_bare_tool_name_is_never_harmful_by_itself(name):
     result = classify_event(record(None, executable=f"/usr/bin/{name}",
                                    kind=EXECUTION_EVIDENCE, confirmed=True))
 
-    assert result.category == NEEDS_REVIEW, f"{name} alone must not be a verdict"
+    assert result.category != POTENTIALLY_HARMFUL, f"{name} alone must not be a verdict"
+    # And it must not compete for attention with a genuine lead.
+    assert result.priority == PRIORITY_3, f"{name} in a system directory is not a lead"
 
 
 def test_execution_from_a_temporary_location_is_flagged():
@@ -69,7 +72,8 @@ def test_execution_from_a_temporary_location_is_flagged():
                                    kind=EXECUTION_EVIDENCE, confirmed=True))
 
     assert result.category == POTENTIALLY_HARMFUL
-    assert "writable or temporary" in result.reason
+    assert "any unprivileged user can write to" in result.reason
+    assert result.priority == PRIORITY_1, "confirmed execution from a writable path is a lead"
 
 
 def test_a_flagged_history_entry_still_says_execution_is_not_established():

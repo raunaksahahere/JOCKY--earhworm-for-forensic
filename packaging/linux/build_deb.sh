@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUNDLE="$ROOT/flutter_client/build/linux/x64/release/bundle"
-VERSION="${JOCKY_VERSION:-0.5.1}"
+VERSION="${JOCKY_VERSION:-0.6.0}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Invalid release version' >&2; exit 1; }
 [[ -x "$BUNDLE/jocky_client" ]] || { echo 'Flutter executable is missing; build the release bundle first' >&2; exit 1; }
 [[ -x "$BUNDLE/backend/jocky-backend" ]] || { echo 'Bundled engine is missing; build the release bundle first' >&2; exit 1; }
@@ -10,6 +10,9 @@ VERSION="${JOCKY_VERSION:-0.5.1}"
 [[ "$(dpkg --print-architecture)" == amd64 ]] || { echo 'This release targets amd64' >&2; exit 1; }
 STAGE="$ROOT/build/deb/jocky_${VERSION}_amd64"
 mkdir -p "$STAGE/DEBIAN" "$STAGE/opt/jocky-workstation" "$STAGE/usr/share/applications" "$STAGE/usr/bin" "$STAGE/usr/share/icons/hicolor/scalable/apps"
+for SIZE in 16 24 32 48 64 128 256 512; do
+  mkdir -p "$STAGE/usr/share/icons/hicolor/${SIZE}x${SIZE}/apps"
+done
 cp -a "$BUNDLE/." "$STAGE/opt/jocky-workstation/"
 cat > "$STAGE/DEBIAN/control" <<CONTROL
 Package: jocky
@@ -24,6 +27,9 @@ Description: Offline defensive forensic workstation
 CONTROL
 cp "$ROOT/flutter_client/packaging/linux/jocky-workstation.desktop" "$STAGE/usr/share/applications/"
 cp "$ROOT/assets/jocky.svg" "$STAGE/usr/share/icons/hicolor/scalable/apps/jocky-workstation.svg"
+for SIZE in 16 24 32 48 64 128 256 512; do
+  cp "$ROOT/assets/icons/jocky-${SIZE}.png" "$STAGE/usr/share/icons/hicolor/${SIZE}x${SIZE}/apps/jocky-workstation.png"
+done
 ln -sfn /opt/jocky-workstation/jocky_client "$STAGE/usr/bin/jocky-workstation"
 # The build tree is setgid and dpkg-deb rejects a control directory carrying
 # that bit. GNU chmod preserves set-user-ID and set-group-ID on directories
@@ -44,4 +50,6 @@ grep -q '/opt/jocky-workstation/backend/jocky-backend$' <<<"$CONTENTS" || {
   echo 'Built package contains no engine' >&2; exit 1; }
 grep -q '/opt/jocky-workstation/backend/_internal/' <<<"$CONTENTS" || {
   echo 'Built package contains no engine runtime' >&2; exit 1; }
+grep -q '/usr/share/icons/hicolor/256x256/apps/jocky-workstation.png$' <<<"$CONTENTS" || {
+  echo 'Built package contains no application icon' >&2; exit 1; }
 echo "Package: $PACKAGE"

@@ -53,7 +53,26 @@ void main() {
 
     final stored = await api.jsonRequest('/api/v1/investigations/$id/reports');
     final report = (stored['items'] as List).last['payload'] as Map<String, dynamic>;
-    expect(report['schema_version'], 4);
+    // Version-agnostic: the guarantees below are what matter, not the number.
+    expect(report['schema_version'], greaterThanOrEqualTo(4));
+    // Priority is present, three-tiered, and separate from classification.
+    final priorities = report['triage']['priorities'] as Map;
+    expect(priorities.keys.toSet(), {'PRIORITY_1', 'PRIORITY_2', 'PRIORITY_3'});
+    for (final lead in report['leads'] as List) {
+      final classification = lead['classification'];
+      expect(['PRIORITY_1', 'PRIORITY_2'], contains(classification['investigator_priority']));
+      expect(classification['why'], isNotEmpty,
+          reason: 'a lead must say why it is ranked where it is');
+    }
+    // Missing arguments are a limitation, never a concern signal.
+    for (final group in report['activity']['groups'] as List) {
+      if (group['command_reconstruction_status'] == 'EXECUTABLE_ONLY') {
+        for (final signal in group['classification']['signals'] as List) {
+          expect(signal['name'], isNot(startsWith('remote_')));
+          expect(signal['name'], isNot(startsWith('download_')));
+        }
+      }
+    }
     // Counts must be named for what they are, never one blurred total.
     final counts = report['record_counts'] as Map<String, dynamic>;
     expect(counts.containsKey('execution_source_records'), isTrue);

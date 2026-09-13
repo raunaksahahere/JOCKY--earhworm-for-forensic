@@ -1,4 +1,5 @@
 """Analyze This Device end to end: history, artifacts, correlation, report, restart."""
+from backend.versions import REPORT_SCHEMA_VERSION
 import time
 
 import pytest
@@ -95,7 +96,7 @@ def test_timeline_is_persisted_and_ordered(service, investigated):
 def test_report_separates_current_from_historical(service, investigated):
     report = service.related(investigated, "reports")[-1]["payload"]
 
-    assert report["schema_version"] == 4
+    assert report["schema_version"] == REPORT_SCHEMA_VERSION
     assert report["historical_execution"]["telemetry_available"] is True
     assert report["collection_window"]["bounded"] is True
     assert report["current_process_snapshot"]["statistics"]["processes_recorded"] > 0
