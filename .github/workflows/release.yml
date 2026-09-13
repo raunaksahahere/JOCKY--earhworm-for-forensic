@@ -213,7 +213,10 @@ jobs:
         with:
           tag_name: v${{ needs.version.outputs.version }}
           name: JOCKY ${{ needs.version.outputs.version }}
-          draft: true
+          # Published, not a draft. Reaching this job is already deliberate: it
+          # runs only for a v* tag or an explicit publish request, and only when
+          # every platform that was asked for succeeded.
+          draft: false
           fail_on_unmatched_files: false
           files: |
             artifacts/*.deb
