@@ -1,0 +1,202 @@
+# Release artifacts for both targets, built on native runners.
+#
+# PyInstaller freezes for the OS it runs on and Flutter desktop builds are
+# native, so neither target can be cross-built: Linux artifacts come from
+# ubuntu-latest and Windows artifacts from windows-latest.
+#
+# Never triggered by an ordinary push. Run it from the Actions tab, or push a
+# v* tag to build and publish a release.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (x.y.z)'
+        required: true
+        default: '0.3.0'
+      publish:
+        description: 'Create a GitHub Release with the artifacts'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the toolchain this repository is developed and tested against.
+  FLUTTER_VERSION: '3.47.2'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${{ inputs.version }}"
+          fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Version must be x.y.z, got '$version'"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux desktop build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev libsecret-1-dev
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Backend tests
+        run: python -m pytest -q
+
+      - name: Freeze the engine
+        run: python scripts/build_backend.py
+
+      - name: Engine integration smoke test
+        run: python scripts/smoke_backend.py --executable backend-dist/jocky-backend/jocky-backend
+
+      # Runs flutter pub get, analyze, test, the release build, and verifies the
+      # engine is inside the bundle.
+      - name: Build the release bundle
+        run: bash packaging/linux/build.sh
+
+      # The packaged-engine test starts the real bundled engine through the real
+      # locator, so a bundle that cannot start its own engine fails the release.
+      - name: Verify the bundle starts its own engine
+        working-directory: flutter_client
+        run: xvfb-run -a flutter test test/integration/packaged_engine_test.dart
+
+      - name: Build the Debian package
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: bash packaging/linux/build_deb.sh
+
+      - name: Verify the package installs and carries the engine
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sudo dpkg -i "build/deb/jocky_${JOCKY_VERSION}_amd64.deb"
+          test -x /opt/jocky-workstation/jocky_client
+          test -x /opt/jocky-workstation/backend/jocky-backend
+          test -d /opt/jocky-workstation/backend/_internal
+          sudo dpkg -r jocky
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-linux-deb
+          path: build/deb/*.deb
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Backend tests
+        run: python -m pytest -q
+
+      - name: Freeze the engine
+        run: python scripts/build_backend.py
+
+      - name: Engine integration smoke test
+        run: python scripts/smoke_backend.py --executable backend-dist/JOCKY-backend/JOCKY-backend.exe
+
+      # Runs flutter pub get, analyze, test, the release build, and verifies the
+      # engine is inside the bundle.
+      - name: Build the release bundle
+        run: pwsh packaging/windows/build.ps1
+
+      - name: Verify the bundle starts its own engine
+        working-directory: flutter_client
+        run: flutter test test/integration/packaged_engine_test.dart
+        env:
+          JOCKY_TEST_BUNDLE: build/windows/x64/runner/Release
+
+      - name: Build the portable archive
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: pwsh packaging/windows/build_portable.ps1
+
+      # Inno Setup ships with the windows-latest image as iscc.
+      - name: Build the installer
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: iscc flutter_client/packaging/windows/jocky-workstation.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-windows-installer
+          path: build/windows/installer/*.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-windows-portable
+          path: build/windows/*.zip
+          if-no-files-found: error
+
+  publish:
+    # Only for a v* tag, or an explicit request. Building never publishes.
+    if: github.ref_type == 'tag' || inputs.publish
+    needs: [version, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.version.outputs.version }}
+          name: JOCKY ${{ needs.version.outputs.version }}
+          draft: true
+          files: |
+            artifacts/*.deb
+            artifacts/*.exe
+            artifacts/*.zip
