@@ -41,12 +41,12 @@ class AppConfig {
 /// Identity of this client build, shown in Settings and stamped into exports.
 abstract final class ClientBuild {
   static const name = 'JOCKY Forensic Workstation';
-  static const version = '0.4.1';
+  static const version = '0.5.0';
 
   /// Command schema this client was written against (`compiler/commands.py`).
   static const supportedCommandSchema = 1;
 
   /// Report schema this client renders. Schema 3 added the historical
   /// execution, artifact, timeline and unavailable-telemetry sections.
-  static const supportedReportSchema = 3;
+  static const supportedReportSchema = 4;
 }

@@ -24,6 +24,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   final _examiner = TextEditingController();
   final _search = TextEditingController();
   final _windowHours = TextEditingController(text: '168');
+  final _activitySearch = TextEditingController();
+  String _triageFilter = 'all';
+  final Set<String> _expanded = {};
   final List<String> _paths = [];
   String? _error, _notice;
   String _statusFilter = 'all';
@@ -48,6 +51,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     _examiner.dispose();
     _search.dispose();
     _windowHours.dispose();
+    _activitySearch.dispose();
     super.dispose();
   }
 
@@ -132,6 +136,17 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   }
 
   List<dynamic> get _limitations => _report['limitations'] as List? ?? const [];
+
+  Map<String, dynamic> get _counts {
+    final value = _report['record_counts'];
+    return value is Map<String, dynamic> ? value : const {};
+  }
+
+  Map<String, dynamic> get _triageCounts {
+    final triage = _report['triage'];
+    final counts = triage is Map ? triage['counts'] : null;
+    return counts is Map<String, dynamic> ? counts : const {};
+  }
   List<dynamic> get _unavailableTelemetry => _report['unavailable_telemetry'] as List? ?? const [];
 
   Widget _summaryRow(String label, String value, {Color? color}) => Padding(
@@ -167,8 +182,19 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           _summaryRow('Collection window:', window is Map
               ? '${window['start']}  →  ${window['end']}'
               : 'not recorded'),
-          _summaryRow('Execution events:', '${_executionEvents.length}'
-              '${(_history['undated_event_count'] ?? 0) == 0 ? '' : ' (${_history['undated_event_count']} carry no timestamp)'}'),
+          // Named for what each number is. One blurred "events" total invited
+          // typed commands to be read as confirmed execution.
+          _summaryRow('Execution-source records:', '${_counts['execution_source_records'] ?? 0}'),
+          _summaryRow('Command-history records:', '${_counts['command_history_records'] ?? 0}'
+              ' (execution not established by these)'),
+          _summaryRow('Session records:', '${_counts['session_records'] ?? 0}'),
+          if ((_history['undated_event_count'] ?? 0) != 0)
+            _summaryRow('Records with no timestamp:', '${_history['undated_event_count']}'),
+          const SizedBox(height: 6),
+          for (final category in _triageOrder)
+            _summaryRow('${_triageLabels[category]}:', '${_triageCounts[category] ?? 0} records',
+                color: _triageColor(category)),
+          const SizedBox(height: 6),
           _summaryRow('Artifacts:', '${_artifacts.length}'),
           _summaryRow('Findings:', '${_findings.length}'),
           _summaryRow('Collection limitations:', '${_limitations.length}'),
@@ -184,6 +210,159 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
             style: TextStyle(fontSize: 12)),
         ]),
       ),
+    );
+  }
+
+  static const _triageLabels = {
+    'POTENTIALLY_HARMFUL': 'POTENTIALLY HARMFUL',
+    'NEEDS_REVIEW': 'NOT SURE / NEEDS REVIEW',
+    'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE': 'NOT HARMFUL ON AVAILABLE EVIDENCE',
+  };
+  static const _triageOrder = ['POTENTIALLY_HARMFUL', 'NEEDS_REVIEW', 'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE'];
+  static const _kindLabels = {
+    'EXECUTION_EVIDENCE': 'EXECUTION EVIDENCE',
+    'COMMAND_HISTORY': 'COMMAND HISTORY',
+    'SESSION_EVENT': 'SESSION EVENT',
+  };
+
+  Color _triageColor(String? category) => switch (category) {
+        'POTENTIALLY_HARMFUL' => Colors.red.shade700,
+        'NEEDS_REVIEW' => Colors.orange.shade800,
+        'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE' => Colors.green.shade700,
+        _ => Colors.grey.shade600,
+      };
+
+  /// Records matching the search box and the triage filter.
+  ///
+  /// Search runs over the whole command, its search form, the executable, the
+  /// source and the evidence reference — never the executable alone, so
+  /// searching "github.com" or "holehe" finds the records that contain them.
+  List<dynamic> get _filteredActivity {
+    final needle = _activitySearch.text.trim().toLowerCase();
+    final rows = _executionEvents.where((row) {
+      if (_triageFilter != 'all' && row['triage'] != _triageFilter) return false;
+      if (needle.isEmpty) return true;
+      final haystack = [
+        row['full_command_line'], row['normalized_command'], row['executable'],
+        row['process_name'], row['source'], row['reference'], row['account'], row['evidence_kind'],
+      ].where((value) => value != null).join(' ').toLowerCase();
+      return haystack.contains(needle);
+    }).toList();
+    // Most concerning first, then most recent.
+    rows.sort((a, b) {
+      final left = _triageOrder.indexOf('${a['triage']}');
+      final right = _triageOrder.indexOf('${b['triage']}');
+      if (left != right) return (left < 0 ? 99 : left).compareTo(right < 0 ? 99 : right);
+      return '${b['timestamp'] ?? ''}'.compareTo('${a['timestamp'] ?? ''}');
+    });
+    return rows;
+  }
+
+  Widget _activityPanel() {
+    final rows = _filteredActivity;
+    final counts = <String, int>{};
+    for (final row in _executionEvents) {
+      counts['${row['triage']}'] = (counts['${row['triage']}'] ?? 0) + 1;
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('Observed activity', style: Theme.of(context).textTheme.titleMedium),
+          const SelectableText(
+            'Triage categories, not verdicts. "Not harmful on available evidence" means nothing in '
+            'what was collected stood out — it is not a statement that the activity was safe.',
+            style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 12),
+          Row(children: [
+            Expanded(child: TextField(
+              controller: _activitySearch,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Search commands, URLs, paths, users, sources or evidence IDs',
+                prefixIcon: Icon(Icons.search), isDense: true),
+            )),
+            const SizedBox(width: 12),
+            DropdownButton<String>(
+              value: _triageFilter,
+              items: [
+                const DropdownMenuItem(value: 'all', child: Text('All')),
+                for (final category in _triageOrder)
+                  DropdownMenuItem(
+                    value: category,
+                    child: Text('${_triageLabels[category]} (${counts[category] ?? 0})',
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+              ],
+              onChanged: (value) => setState(() => _triageFilter = value ?? 'all'),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          Text('${rows.length} of ${_executionEvents.length} records',
+              style: const TextStyle(fontSize: 12)),
+          const SizedBox(height: 8),
+          if (rows.isEmpty)
+            const Padding(padding: EdgeInsets.all(16),
+              child: Text('No activity records match.'))
+          else
+            for (final row in rows.take(200)) _activityRow(row),
+          if (rows.length > 200)
+            Padding(padding: const EdgeInsets.only(top: 8), child: Text(
+              '${rows.length - 200} further records are not shown here. Narrow the search, or read '
+              'them in the report appendices and the JSON export.',
+              style: const TextStyle(fontSize: 12))),
+        ]),
+      ),
+    );
+  }
+
+  Widget _activityRow(dynamic row) {
+    final reference = '${row['reference'] ?? row['id']}';
+    final confirmed = row['execution_confirmed'] == true;
+    final command = row['full_command_line'] as String?;
+    final kind = '${row['evidence_kind']}';
+    final open = _expanded.contains(reference);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        border: Border(left: BorderSide(color: _triageColor('${row['triage']}'), width: 3)),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.25),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Wrap(spacing: 10, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          Text(_triageLabels['${row['triage']}'] ?? 'UNCLASSIFIED',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                  color: _triageColor('${row['triage']}'))),
+          Text('${row['timestamp'] ?? 'time not recorded by source'}',
+              style: const TextStyle(fontSize: 11.5)),
+          Text(reference, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+        ]),
+        const SizedBox(height: 4),
+        // The command exactly as its source recorded it, never shortened to the
+        // executable.
+        SelectableText(
+          command ?? '${row['executable'] ?? row['process_name'] ?? 'unnamed process'}',
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5)),
+        if (command == null)
+          Text('Full command line: not available from collected evidence '
+               '(${row['command_reconstruction_status'] ?? 'NOT_AVAILABLE'})',
+              style: const TextStyle(fontSize: 11.5)),
+        const SizedBox(height: 4),
+        Text('${_kindLabels[kind] ?? kind}  |  '
+             '${confirmed ? 'execution confirmed by the source' : 'execution NOT established'}'
+             '  |  command ${row['command_reconstruction_status'] ?? 'NOT_AVAILABLE'}'
+             '/${row['command_evidence_strength'] ?? 'n/a'}  |  ${row['source']}',
+            style: const TextStyle(fontSize: 11.5)),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: () => setState(() => open ? _expanded.remove(reference) : _expanded.add(reference)),
+            child: Text(open ? 'Hide details' : 'Details'),
+          ),
+        ),
+        if (open) Padding(padding: const EdgeInsets.only(left: 8, bottom: 8), child: _json(row['payload'])),
+      ]),
     );
   }
 
@@ -244,6 +423,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         ]),
         if (!terminal.contains(_case?['status'])) const Padding(padding: EdgeInsets.all(16), child: Text('Preparing → Collecting → Analyzing → Finalizing. Exact progress is unavailable; stages reflect persisted backend state.')),
         _collectionSummary(),
+        const SizedBox(height: 16),
+        _activityPanel(),
         _section('Device information', _case?['device']),
         _section('Investigation context', _case),
         _section('Historical execution — HISTORICAL EVIDENCE (${_executionEvents.length})', _executionEvents),
