@@ -10,10 +10,16 @@ point in time.
 
 from __future__ import annotations
 
-EXECUTION_EVENT = "EXECUTION_EVENT"
-FILE_EVENT = "FILE_EVENT"
-OBSERVATION = "OBSERVATION"
-ANALYSIS_FINDING = "ANALYSIS_FINDING"
+# Entry kinds mirror the evidence kinds, because the distinction between "a
+# source recorded this running" and "someone typed this" is the one an
+# investigator most needs the timeline to keep. A shell history line is never
+# EXECUTION_EVIDENCE merely because it contains a command.
+EXECUTION_EVIDENCE = "EXECUTION_EVIDENCE"
+COMMAND_HISTORY = "COMMAND_HISTORY"
+SESSION_EVENT = "SESSION_EVENT"
+PROCESS_SNAPSHOT = "PROCESS_SNAPSHOT"
+ARTIFACT_OBSERVATION = "ARTIFACT_OBSERVATION"
+FINDING = "FINDING"
 INVESTIGATION_STATE = "INVESTIGATION_STATE"
 
 MAX_TIMELINE_ENTRIES = 10000
@@ -44,16 +50,24 @@ def build_timeline(*, execution=None, artifacts=None, processes=None, findings=(
         (dated if entry["timestamp"] else undated).append(entry)
 
     for event in (execution or {}).get("events", []) or []:
-        name = event.get("process_name") or event.get("executable") or "unnamed process"
+        # The title is the command when one was recorded. Showing only the
+        # executable would discard the most useful thing the source captured.
+        name = (event.get("full_command_line")
+                or event.get("executable") or event.get("process_name") or "unnamed process")
         place(_entry(
-            EXECUTION_EVENT, event.get("timestamp"),
-            title=f"{name} — {event.get('source')}",
+            event.get("evidence_kind") or EXECUTION_EVIDENCE, event.get("timestamp"),
+            title=name,
             detail=event.get("evidence_strength"),
             source=event.get("source"),
             classification=event.get("classification"),
-            references=[{"kind": "execution_event", "id": event.get("event_id")}],
+            references=[{"kind": "execution_event",
+                         "id": event.get("reference") or event.get("event_id")}],
             extra={
                 "executable": event.get("executable"),
+                "process_name": event.get("process_name"),
+                "full_command_line": event.get("full_command_line"),
+                "command_reconstruction_status": event.get("command_reconstruction_status"),
+                "execution_confirmed": bool(event.get("execution_confirmed")),
                 "pid": event.get("pid"),
                 "user": event.get("user"),
                 "last_seen": event.get("last_seen"),
@@ -65,20 +79,21 @@ def build_timeline(*, execution=None, artifacts=None, processes=None, findings=(
         # A file's modification time is a property of the file, not a record
         # that JOCKY watched it change; the classification says so.
         place(_entry(
-            FILE_EVENT, record.get("modified"),
+            ARTIFACT_OBSERVATION, record.get("modified"),
             title=f"{record['filename']} last modified",
             detail=(f"Filesystem modification time for {record['path']}. This is metadata read at "
                     "collection time, not an observation of the change happening."),
             source=record.get("source"),
             classification="OBSERVED" if record["collection_status"] == "COLLECTED" else "UNAVAILABLE",
-            references=[{"kind": "artifact", "id": record["path"], "hash": record.get("hash")}],
+            references=[{"kind": "artifact", "id": record.get("reference") or record["path"],
+                         "path": record["path"], "hash": record.get("hash")}],
             extra={"collection_status": record["collection_status"], "size_bytes": record.get("size_bytes")},
         ))
 
     snapshot = processes or {}
     for process in snapshot.get("processes", []) or []:
         place(_entry(
-            OBSERVATION, process.get("started_at"),
+            PROCESS_SNAPSHOT, process.get("started_at"),
             title=f"{process.get('name') or 'unnamed process'} running (PID {process.get('pid')})",
             detail=("Present in the current process snapshot. A running process establishes the present, "
                     "not the past."),
@@ -90,7 +105,7 @@ def build_timeline(*, execution=None, artifacts=None, processes=None, findings=(
 
     for finding in findings or ():
         place(_entry(
-            ANALYSIS_FINDING, finding.get("timestamp"),
+            FINDING, finding.get("timestamp"),
             title=finding.get("title"),
             detail=finding.get("explanation"),
             source="JOCKY correlation",

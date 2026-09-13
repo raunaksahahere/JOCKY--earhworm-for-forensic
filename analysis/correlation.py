@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 
 from .execution_model import AVAILABLE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED
+from .triage import NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY, LABELS
 
 INFO, LOW, MEDIUM, HIGH = "info", "low", "medium", "high"
 
@@ -24,7 +25,8 @@ OBSERVED_DIRECTLY = "directly observed by the collector"
 QUALIFIED = "qualified: the underlying source has known limits"
 
 
-def _finding(category, severity, title, explanation, *, confidence, classification, references):
+def _finding(category, severity, title, explanation, *, confidence, classification, references,
+             triage=NEEDS_REVIEW, why=None):
     return {
         "category": category,
         "severity": severity,
@@ -33,6 +35,12 @@ def _finding(category, severity, title, explanation, *, confidence, classificati
         "confidence": confidence,
         "classification": classification,
         "evidence_references": references,
+        # Investigator triage, kept separate from severity: severity says how
+        # much it would matter, triage says what to do with it next.
+        "triage": triage,
+        "triage_label": LABELS[triage],
+        "priority": PRIORITY[triage],
+        "why": why or explanation.split(". ")[0] + ".",
     }
 
 
@@ -62,15 +70,23 @@ def correlate(*, execution=None, artifacts=None, processes=None):
     findings.extend(_artifact_findings(events, by_path, sources_by_event, links))
     findings.extend(_indicator_findings(records))
     findings.extend(_integrity_findings(records))
-    findings.extend(_telemetry_findings(execution))
-    findings.extend(_completeness_findings(execution, artifacts, processes or {}))
+    findings.sort(key=lambda finding: finding["priority"])
+
+    # Gaps in what could be collected are reported separately. A telemetry
+    # source that was switched off is a limitation of the investigation, not an
+    # activity finding, and mixing the two buries the findings that matter.
+    limitations = list(_telemetry_findings(execution))
+    limitations.extend(_completeness_findings(execution, artifacts, processes or {}))
 
     return {
         "findings": findings,
+        "limitations": limitations,
         "links": links,
         "statistics": {
             "findings_by_severity": _count(findings, "severity"),
             "findings_by_category": _count(findings, "category"),
+            "findings_by_triage": _count(findings, "triage"),
+            "limitation_count": len(limitations),
             "execution_events_with_artifact": sum(1 for link in links if link["artifact_present"]),
             "execution_events_without_artifact": sum(1 for link in links if not link["artifact_present"]),
         },
@@ -94,7 +110,7 @@ def _artifact_findings(events, by_path, sources_by_event, links):
         record = by_path.get(os.path.abspath(path))
         present = bool(record and record["collection_status"] == "COLLECTED")
         links.append({
-            "execution_event_id": event.get("event_id"),
+            "execution_event_id": event.get("reference") or event.get("event_id"),
             "source": event.get("source"),
             "executable": path,
             "artifact_present": present,
@@ -112,9 +128,14 @@ def _artifact_findings(events, by_path, sources_by_event, links):
                  "path at collection time. This is expected after a package upgrade, an uninstall or a "
                  "temporary file being cleaned up, and it is also what removal of a program after use looks "
                  "like. The record alone does not distinguish between them."),
+                triage=NEEDS_REVIEW,
+                why=("Execution evidence names this path and nothing is there now. Routine "
+                     "removal and deliberate cleanup look identical in this record."),
                 confidence=corroboration, classification="INFERRED",
-                references=[_reference("execution_event", event.get("event_id"), source=event.get("source")),
-                            _reference("artifact", path, collection_status="MISSING")],
+                references=[_reference("execution_event", event.get("reference") or event.get("event_id"),
+                                       source=event.get("source")),
+                            _reference("artifact", record.get("reference") or path, path=path,
+                                       collection_status="MISSING")],
             ))
 
         if record and record.get("notable_location") and path not in reported_location:
@@ -126,9 +147,13 @@ def _artifact_findings(events, by_path, sources_by_event, links):
                  "unprivileged users and commonly used for staging. Legitimate installers, updaters and "
                  "build tools also run from these directories, so this is a reason to inspect the artifact, "
                  "not a conclusion about it."),
+                triage=POTENTIALLY_HARMFUL,
+                why=(f"Ran from '{record['notable_location']}', a location any unprivileged "
+                     "user can write to."),
                 confidence=OBSERVED_DIRECTLY, classification="INFERRED",
-                references=[_reference("execution_event", event.get("event_id"), source=event.get("source")),
-                            _reference("artifact", path, hash=record.get("hash"))],
+                references=[_reference("execution_event", event.get("reference") or event.get("event_id"),
+                                       source=event.get("source")),
+                            _reference("artifact", record.get("reference") or path, path=path, hash=record.get("hash"))],
             ))
 
         if present and record.get("hash") and path not in reported_match:
@@ -139,9 +164,12 @@ def _artifact_findings(events, by_path, sources_by_event, links):
                 (f"{event.get('source')} names {path}, and a file exists there whose "
                  f"{record['hash_algorithm']} digest is {record['hash']}. The digest records the bytes "
                  "present now; it does not prove these are the bytes that ran."),
+                triage=NOT_HARMFUL,
+                why="The image named by the evidence is present and was hashed.",
                 confidence=corroboration, classification="OBSERVED",
-                references=[_reference("execution_event", event.get("event_id"), source=event.get("source")),
-                            _reference("artifact", path, hash=record.get("hash"))],
+                references=[_reference("execution_event", event.get("reference") or event.get("event_id"),
+                                       source=event.get("source")),
+                            _reference("artifact", record.get("reference") or path, path=path, hash=record.get("hash"))],
             ))
     return findings
 
@@ -155,8 +183,11 @@ def _indicator_findings(records):
                 f"{indicator['label']}: {record['filename']}",
                 (f"{indicator['detail']} This is a static naming heuristic applied to {record['path']}. "
                  "It describes the name only and is not a statement about the file's behaviour."),
+                triage=POTENTIALLY_HARMFUL if indicator.get("level") == "warning" else NEEDS_REVIEW,
+                why=f"Filename heuristic: {indicator['label']}.",
                 confidence=OBSERVED_DIRECTLY, classification="INFERRED",
-                references=[_reference("artifact", record["path"], hash=record.get("hash"))],
+                references=[_reference("artifact", record.get("reference") or record["path"], path=record["path"],
+                                       hash=record.get("hash"))],
             ))
     return findings
 
@@ -172,6 +203,8 @@ def _integrity_findings(records):
                 (f"{record['path']} now digests to {record.get('hash')}, which differs from the digest "
                  "recorded in this workstation's hash ledger. The change is established; its cause is not. "
                  "Routine updates produce the same result as tampering."),
+                triage=NEEDS_REVIEW,
+                why="The file's bytes differ from the digest recorded earlier.",
                 confidence=OBSERVED_DIRECTLY, classification="OBSERVED",
                 references=[_reference("artifact", record["path"], hash=record.get("hash"),
                                        previous_hash=(record.get("previous_hash") or {}).get("hash"))],
@@ -183,8 +216,11 @@ def _integrity_findings(records):
                 f"Structural integrity check reported {integrity['status']}: {record['filename']}",
                 (f"{integrity.get('detail') or integrity.get('message') or 'The structural check did not pass.'} "
                  f"This inspects {record['path']} against the expected container format only."),
+                triage=NEEDS_REVIEW,
+                why="The file does not match the structure its extension implies.",
                 confidence=OBSERVED_DIRECTLY, classification="OBSERVED",
-                references=[_reference("artifact", record["path"], hash=record.get("hash"))],
+                references=[_reference("artifact", record.get("reference") or record["path"], path=record["path"],
+                                       hash=record.get("hash"))],
             ))
     return findings
 
