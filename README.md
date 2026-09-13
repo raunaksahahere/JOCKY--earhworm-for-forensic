@@ -91,7 +91,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.4.1_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
+`build/deb/jocky_0.5.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.
@@ -179,6 +179,42 @@ Findings are rule-based triage carrying severity, confidence and the evidence
 they rest on. JOCKY does not call anything malware, does not infer execution
 from a source that does not record it, and does not replace an unknown with a
 guess.
+
+## Reading an investigation
+
+Every activity record carries the kind of evidence it is, and the report never
+blurs the three together:
+
+| Evidence kind | What it proves | Execution |
+| --- | --- | --- |
+| `EXECUTION_EVIDENCE` | a source recorded the process running | confirmed by the source |
+| `COMMAND_HISTORY` | a command was entered into a shell | **not established** |
+| `SESSION_EVENT` | a login session opened or closed | not applicable |
+
+Where a source recorded the whole command, the whole command is what you see —
+quoting, pipes, redirections and URLs preserved exactly. Where it recorded only
+an image name, the report says so (`EXECUTABLE_ONLY`) instead of inventing
+arguments. A reduced form exists alongside for searching and never replaces the
+raw command.
+
+Triage is three-way and is not a verdict:
+
+- **POTENTIALLY HARMFUL** — the evidence gives a concrete reason to look, such
+  as a remote fetch piped into an interpreter, or an image running from a
+  writable temporary directory.
+- **NOT SURE / NEEDS REVIEW** — recorded, but neither recognised as routine nor
+  matched by a concern rule.
+- **NOT HARMFUL ON AVAILABLE EVIDENCE** — nothing in what was collected stood
+  out. This is not a statement that the activity was safe.
+
+No single keyword classifies anything. `curl`, `python3`, `sudo`, `nc` and `ssh`
+on their own are ordinary tools and land in NEEDS REVIEW.
+
+The main PDF is roughly 8–15 pages: coverage, a triage table, the activity that
+needs attention, then confirmed execution separated from typed commands and from
+session activity. Detail lives in appendices. Nothing is deleted to achieve
+that — SQLite and the JSON export hold every record, and findings cite stable
+identifiers (EXEC-0001, CMD-0001, ART-0001) so any statement can be traced back.
 
 ## Contracts, storage and limits
 

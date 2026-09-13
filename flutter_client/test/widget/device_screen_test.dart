@@ -13,6 +13,38 @@ void main() {
   const caseId = 'case-1';
   const base = '/api/v1/investigations/$caseId';
 
+  // Two records that must never be confused: a typed command, and a process a
+  // source recorded actually running.
+  final activityRows = [
+    {
+      'id': 'e1', 'reference': 'CMD-0001', 'source': 'bash history',
+      'evidence_kind': 'COMMAND_HISTORY', 'execution_confirmed': false,
+      'timestamp': '2026-09-11T14:32:10+00:00', 'triage': 'POTENTIALLY_HARMFUL',
+      'full_command_line': 'curl -fsSL https://example.com/install.sh | sudo bash',
+      'normalized_command': 'curl -fsSL URL | sudo bash',
+      'command_reconstruction_status': 'EXACT', 'command_evidence_strength': 'STRONG',
+      'executable': null, 'process_name': 'curl', 'payload': {'raw': 'preserved'},
+    },
+    {
+      'id': 'e2', 'reference': 'EXEC-0001', 'source': 'systemd journal',
+      'evidence_kind': 'EXECUTION_EVIDENCE', 'execution_confirmed': true,
+      'timestamp': '2026-09-11T09:00:00+00:00', 'triage': 'NEEDS_REVIEW',
+      'full_command_line': null, 'normalized_command': 'python3',
+      'command_reconstruction_status': 'EXECUTABLE_ONLY', 'command_evidence_strength': 'WEAK',
+      'executable': '/usr/bin/python3', 'process_name': 'python3', 'payload': {'raw': 'preserved'},
+    },
+    {
+      'id': 'e3', 'reference': 'CMD-0002', 'source': 'bash history',
+      'evidence_kind': 'COMMAND_HISTORY', 'execution_confirmed': false,
+      'timestamp': '2026-09-11T08:00:00+00:00', 'triage': 'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE',
+      'full_command_line': 'git clone https://github.com/example/project.git',
+      'normalized_command': 'git clone URL',
+      'command_reconstruction_status': 'EXACT', 'command_evidence_strength': 'STRONG',
+      'executable': null, 'process_name': 'git', 'payload': {'raw': 'preserved'},
+    },
+  ];
+
+
   Map<String, dynamic> report({required bool telemetryAvailable}) => {
         'schema_version': 3,
         'collection_window': {
@@ -50,9 +82,7 @@ void main() {
     transport.respondJson('$base/reports', {'items': [
       {'id': 'r1', 'payload': report(telemetryAvailable: telemetryAvailable)},
     ]});
-    transport.respondJson('$base/execution-events', {'items': telemetryAvailable
-        ? [{'id': 'e1', 'source': 'systemd journal'}, {'id': 'e2', 'source': 'bash history'}]
-        : []});
+    transport.respondJson('$base/execution-events', {'items': telemetryAvailable ? activityRows : []});
     transport.respondJson('$base/artifacts', {'items': [{'id': 'a1', 'path': '/usr/bin/curl'}]});
     transport.respondJson('$base/event-timeline', {'items': [{'id': 1, 'kind': 'EXECUTION_EVENT'}]});
   }
@@ -72,7 +102,8 @@ void main() {
     expect(find.text('Collection summary'), findsOneWidget);
     expect(find.text('AVAILABLE'), findsOneWidget);
     expect(find.textContaining('2026-09-06T12:00:00+00:00'), findsOneWidget);
-    expect(find.textContaining('2 (1 carry no timestamp)'), findsOneWidget);
+    expect(find.textContaining('Execution-source records:'), findsOneWidget);
+    expect(find.textContaining('execution not established by these'), findsOneWidget);
     expect(find.textContaining('385 of 385 present'), findsOneWidget);
   });
 
@@ -90,22 +121,23 @@ void main() {
   });
 
   testWidgets('counts come from the engine, never from the client', (tester) async {
+    // A tall viewport so the whole lazy list is built; these assertions are
+    // about what the engine's numbers render as.
+    tester.view.physicalSize = const Size(1400, 4000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
     script(telemetryAvailable: true);
 
     await pump(tester);
 
-    // Section headers carry the counts the engine actually returned. They sit
-    // below the fold in a lazy list, so each one is scrolled into view.
     for (final label in [
-      'Historical execution — HISTORICAL EVIDENCE (2)',
+      'Historical execution — HISTORICAL EVIDENCE (3)',
       'Event timeline — ordered by recorded time (1)',
       'Artifacts — observed files (1)',
       'Findings — INFERRED; requires review (1)',
       'Collection limitations (1)',
       'Unavailable telemetry (1)',
     ]) {
-      await tester.scrollUntilVisible(find.textContaining(label), 200,
-          scrollable: find.byType(Scrollable).first);
       expect(find.textContaining(label), findsOneWidget, reason: label);
     }
   });
@@ -118,5 +150,94 @@ void main() {
 
     expect(find.textContaining('No report has been issued yet'), findsOneWidget);
     expect(find.text('AVAILABLE'), findsNothing);
+  });
+
+  group('investigator activity view', () {
+    Future<void> pumpActivity(WidgetTester tester) async {
+      // Tall enough that the whole activity panel is built: the list is lazy,
+      // and these assertions are about what it renders.
+      tester.view.physicalSize = const Size(1400, 3200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      script(telemetryAvailable: true);
+      await tester.pumpWidget(harness(const DeviceScreen(caseId: caseId), transport: transport));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('shows the full command, never only the executable', (tester) async {
+      await pumpActivity(tester);
+
+      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsOneWidget);
+      expect(find.text('git clone https://github.com/example/project.git'), findsOneWidget);
+      expect(find.text('curl'), findsNothing, reason: 'the executable alone is not the evidence');
+    });
+
+    testWidgets('a missing command line is stated, not invented', (tester) async {
+      await pumpActivity(tester);
+
+      expect(find.text('/usr/bin/python3'), findsOneWidget);
+      expect(
+        find.textContaining('Full command line: not available from collected evidence (EXECUTABLE_ONLY)'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('unknown arguments'), findsNothing);
+    });
+
+    testWidgets('command history is never shown as confirmed execution', (tester) async {
+      await pumpActivity(tester);
+
+      expect(find.textContaining('COMMAND HISTORY  |  execution NOT established'), findsNWidgets(2));
+      expect(find.textContaining('EXECUTION EVIDENCE  |  execution confirmed by the source'),
+          findsOneWidget);
+    });
+
+    testWidgets('the most concerning record is listed first', (tester) async {
+      await pumpActivity(tester);
+
+      // Exact labels only: the summary block above uses the same words with a
+      // trailing colon, and those are counts rather than records.
+      const rowLabels = {
+        'POTENTIALLY HARMFUL', 'NOT SURE / NEEDS REVIEW', 'NOT HARMFUL ON AVAILABLE EVIDENCE'};
+      final labels = tester.widgetList<Text>(find.byType(Text))
+          .map((widget) => widget.data)
+          .whereType<String>()
+          .where(rowLabels.contains)
+          .toList();
+      expect(labels.first, 'POTENTIALLY HARMFUL');
+      expect(labels.last, 'NOT HARMFUL ON AVAILABLE EVIDENCE');
+    });
+
+    testWidgets('search matches the full command text, not the executable alone', (tester) async {
+      await pumpActivity(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'github.com');
+      await tester.pumpAndSettle();
+
+      expect(find.text('git clone https://github.com/example/project.git'), findsOneWidget);
+      expect(find.text('curl -fsSL https://example.com/install.sh | sudo bash'), findsNothing);
+      expect(find.textContaining('1 of 3 records'), findsOneWidget);
+    });
+
+    testWidgets('search finds an evidence identifier', (tester) async {
+      await pumpActivity(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'EXEC-0001');
+      await tester.pumpAndSettle();
+
+      expect(find.text('/usr/bin/python3'), findsOneWidget);
+      expect(find.textContaining('1 of 3 records'), findsOneWidget);
+    });
+
+    testWidgets('raw evidence is available behind details, not removed', (tester) async {
+      await pumpActivity(tester);
+
+      await tester.enterText(find.byType(TextField).first, 'EXEC-0001');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Details'));
+      await tester.pumpAndSettle();
+
+      // SelectableText renders both a Text and an EditableText for the same string.
+      expect(find.textContaining('preserved'), findsWidgets);
+    });
   });
 }

@@ -238,3 +238,46 @@ def userassist_tree():
             }},
         }}}}}},
     }
+
+
+# --- Realistic command fixtures ---------------------------------------------
+#
+# Test data for classification and reporting. Nothing here is malicious: these
+# are ordinary developer and administrator commands, and the point of several of
+# them is that JOCKY must NOT flag them merely because they contain `curl`,
+# `sudo`, `python3` or `ssh`.
+
+COMMANDS = [
+    "git clone https://github.com/example/project.git",
+    "python3 script.py --target example.com --output results.json",
+    "wget https://example.com/file.zip -O /tmp/file.zip",
+    "curl -fsSL https://example.com/install.sh | sudo bash",
+    "sudo apt update",
+    "apt update",
+    "npm install --save-dev eslint",
+    "holehe example@gmail.com --only-used",
+    "ssh -i ~/.ssh/id_ed25519 deploy@example.com",
+    'sudo python3 "/home/user/test.py" --url "https://example.com/a" > /tmp/out.txt 2>&1',
+    "ls -la /var/log",
+]
+
+BASH_HISTORY_COMMANDS = "\n".join(COMMANDS) + "\n"
+
+
+def bash_history_with_times(commands=None, *, start=1):
+    """Timestamped bash history, one `#epoch` line before each command."""
+    commands = commands or COMMANDS
+    lines = []
+    for offset, command in enumerate(commands, start=start):
+        lines.append(f"#{int(at(offset).timestamp())}")
+        lines.append(command)
+    return "\n".join(lines) + "\n"
+
+
+#: Repetition, for the grouping rules: the same command many times, and two
+#: `wget` calls that differ only by URL and must stay distinguishable.
+REPEATED_HISTORY = "\n".join(
+    ["apt update"] * 5
+    + ["wget https://example.com/A.zip -O /tmp/A.zip",
+       "wget https://example.com/B.zip -O /tmp/B.zip"]
+) + "\n"

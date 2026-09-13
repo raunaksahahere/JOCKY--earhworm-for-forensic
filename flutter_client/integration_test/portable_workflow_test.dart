@@ -53,7 +53,32 @@ void main() {
 
     final stored = await api.jsonRequest('/api/v1/investigations/$id/reports');
     final report = (stored['items'] as List).last['payload'] as Map<String, dynamic>;
-    expect(report['schema_version'], 3);
+    expect(report['schema_version'], 4);
+    // Counts must be named for what they are, never one blurred total.
+    final counts = report['record_counts'] as Map<String, dynamic>;
+    expect(counts.containsKey('execution_source_records'), isTrue);
+    expect(counts.containsKey('command_history_records'), isTrue);
+    expect(counts.containsKey('session_records'), isTrue);
+    expect(counts.containsKey('events'), isFalse);
+    // Triage is present and three-way.
+    expect((report['triage']['counts'] as Map).keys.toSet(), {
+      'POTENTIALLY_HARMFUL', 'NEEDS_REVIEW', 'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE'});
+    // Collection limitations are kept apart from activity findings.
+    final findingCategories =
+        (report['findings'] as List).map((item) => item['category']).toSet();
+    expect(findingCategories.contains('telemetry_unavailable'), isFalse,
+        reason: 'a disabled telemetry source is a limitation, not an activity finding');
+    expect(report['collection_limitations'], isNotEmpty);
+    // Command history is never reported as confirmed execution, and where the
+    // source recorded a whole command it survives whole.
+    for (final group in report['activity']['groups'] as List) {
+      if (group['evidence_kind'] == 'COMMAND_HISTORY') {
+        expect(group['execution_confirmed'], isFalse);
+      }
+      for (final record in group['records'] as List) {
+        expect(record['reference'], isNotNull);
+      }
+    }
     expect(report['collection_window']['bounded'], isTrue);
     expect(report['historical_execution']['telemetry_available'], isTrue);
     expect(report['appendix_process_listing'], isNotEmpty,

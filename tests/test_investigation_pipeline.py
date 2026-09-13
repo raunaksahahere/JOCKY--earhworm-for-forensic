@@ -74,7 +74,9 @@ def test_findings_are_generated_and_traceable(service, investigated):
     categories = {finding["category"] for finding in findings}
     assert "execution_artifact_missing" in categories
     assert "suspicious_filename" in categories, "the double-extension fixture must be flagged"
-    assert "telemetry_unavailable" in categories, "a disabled source is itself a finding"
+    limitations = {item["category"] for item in service.related(investigated, "collection_limitations")}
+    assert "telemetry_unavailable" in limitations, "a disabled source is a limitation, not a finding"
+    assert "telemetry_unavailable" not in categories
     assert all(finding["confidence"] for finding in findings)
     assert links and all(link["kind"] and link["reference"] for link in links)
     referenced = {link["finding_id"] for link in links}
@@ -87,13 +89,13 @@ def test_timeline_is_persisted_and_ordered(service, investigated):
     assert entries
     stamps = [entry["timestamp"] for entry in entries if entry["timestamp"]]
     assert stamps == sorted(stamps)
-    assert {"EXECUTION_EVENT", "ANALYSIS_FINDING"} <= {entry["kind"] for entry in entries}
+    assert {"EXECUTION_EVIDENCE", "FINDING"} <= {entry["kind"] for entry in entries}
 
 
 def test_report_separates_current_from_historical(service, investigated):
     report = service.related(investigated, "reports")[-1]["payload"]
 
-    assert report["schema_version"] == 3
+    assert report["schema_version"] == 4
     assert report["historical_execution"]["telemetry_available"] is True
     assert report["collection_window"]["bounded"] is True
     assert report["current_process_snapshot"]["statistics"]["processes_recorded"] > 0
@@ -137,7 +139,8 @@ def test_new_collections_are_reachable_through_the_api(service, investigated):
     client = app.test_client()
     headers = {"Authorization": "Bearer token", "X-Jocky-Instance": "instance"}
 
-    for alias in ("execution-events", "artifacts", "event-timeline", "finding-evidence"):
+    for alias in ("execution-events", "artifacts", "event-timeline", "finding-evidence",
+                  "collection-limitations"):
         response = client.get(f"/api/v1/investigations/{investigated}/{alias}", headers=headers)
         assert response.status_code == 200, alias
         assert isinstance(response.get_json()["items"], list)

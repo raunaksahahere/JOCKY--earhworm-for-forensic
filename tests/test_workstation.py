@@ -51,7 +51,7 @@ def test_database_migration_restart_backup_rollback(store):
     backup = store.backup()
     with sqlite3.connect(backup) as db:
         assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
         assert db.execute("SELECT value FROM metadata").fetchone()[0] == "true"
 
 
@@ -121,7 +121,7 @@ def test_collection_history_report_restart(service, store, tmp_path, monkeypatch
     assert len(reports) == 1
     report = reports[0]["payload"]
     assert report["status"] == "completed" and report["device"]["hostname"]
-    assert report["schema_version"] == 3 and report["evidence"]
+    assert report["schema_version"] == 4 and report["evidence"]
     assert store.rows("SELECT * FROM hash_observations")
     assert source.read_bytes() == b"safe test fixture"
     service.close()

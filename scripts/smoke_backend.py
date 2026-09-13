@@ -57,9 +57,26 @@ def smoke(command, workspace):
         findings = request(session, f"/api/v1/investigations/{case['id']}/findings")['items']
         event_timeline = request(session, f"/api/v1/investigations/{case['id']}/event-timeline")['items']
         stored = request(session, f"/api/v1/investigations/{case['id']}/reports")['items'][-1]['payload']
-        assert stored['schema_version'] == 3, stored['schema_version']
+        assert stored['schema_version'] == 4, stored['schema_version']
         assert stored['collection_window']['bounded'] is True
         assert stored['appendix_process_listing'], 'the process listing must survive in the appendix'
+        # Counts must be named for what they are, and command history must never
+        # be reported as confirmed execution.
+        counts = stored['record_counts']
+        assert set(counts) >= {'execution_source_records', 'command_history_records', 'session_records'}
+        kinds = {event['evidence_kind'] for event in history}
+        assert kinds <= {'EXECUTION_EVIDENCE', 'COMMAND_HISTORY', 'SESSION_EVENT'}, kinds
+        for event in history:
+            if event['evidence_kind'] == 'COMMAND_HISTORY':
+                assert event['execution_confirmed'] is False, event['reference']
+            assert event['reference'], 'every record needs a citable identifier'
+        # Where a source recorded the whole command, it must be preserved whole.
+        with_commands = [event for event in history if event['full_command_line']]
+        assert all(event['command_reconstruction_status'] in ('EXACT', 'PARTIAL')
+                   for event in with_commands)
+        triage = stored['triage']['counts']
+        assert set(triage) == {'POTENTIALLY_HARMFUL', 'NEEDS_REVIEW',
+                               'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE'}
         sources = stored['historical_execution']['sources']
         assert sources, 'every telemetry source must be reported, available or not'
         assert all(source['status'] in ('AVAILABLE','NOT_AVAILABLE','NOT_ENABLED','PERMISSION_DENIED')
@@ -82,6 +99,8 @@ def smoke(command, workspace):
                           'pdf_bytes':len(pdf),'historical_telemetry':telemetry,
                           'execution_events':len(history),'artifacts':len(artifacts),
                           'findings':len(findings),'timeline_entries':len(event_timeline),
+                          'record_counts':counts,'triage':triage,
+                          'longest_command':max((len(e['full_command_line'] or '') for e in history), default=0),
                           'sources':{source['name']: source['status'] for source in sources},
                           'workspace':str(workspace)}))
     finally:

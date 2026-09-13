@@ -2,6 +2,80 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.5.0 — 2026-09-13
+
+Investigator usability. The evidence was already being collected correctly; it
+was being presented in a way that hid the most useful part of it.
+
+### Fixed
+
+- **Reports showed `git`, `python3`, `wget` where the source had recorded the
+  whole command.** Shell history stores the command verbatim, and it was in the
+  database all along — the report and the timeline rendered `process_name` and
+  dropped `command_line`. The full command is now what an investigator sees:
+  `curl -fsSL https://example.com/install.sh | sudo bash`, quoting, pipes,
+  redirections and all.
+- **Shell history was labelled EXECUTION_EVENT.** A typed command is not proof
+  that anything ran. Records now carry an evidence kind — EXECUTION_EVIDENCE,
+  COMMAND_HISTORY, SESSION_EVENT — and command history is never promoted to
+  execution evidence however complete its text is.
+- **"1721 historical execution records"** blurred three different kinds of
+  evidence into one number. Counts are now named for what they are:
+  execution-source records, command-history records and session records.
+
+### Added
+
+- Command reconstruction on every record: `full_command_line`,
+  `command_source`, `command_reconstruction_status` (EXACT, PARTIAL,
+  EXECUTABLE_ONLY, NOT_AVAILABLE) and `command_evidence_strength` (STRONG,
+  MODERATE, WEAK). When a source recorded only an image name, the report says
+  "not available from collected evidence" rather than inventing arguments. A
+  separate normalized form exists for searching and never replaces the raw
+  command.
+- Three-way triage (`analysis/triage.py`): POTENTIALLY HARMFUL, NOT HARMFUL ON
+  AVAILABLE EVIDENCE, NOT SURE / NEEDS REVIEW — with a one-line reason for each.
+  These are triage categories, not verdicts, and "not harmful" is worded as
+  "nothing in the collected evidence stood out", never as proven safe. No single
+  keyword classifies anything: `curl`, `python3`, `sudo`, `nc` and `ssh` on
+  their own land in NEEDS_REVIEW. Concern requires a combination, such as a
+  remote fetch piped into an interpreter or an image running from a writable
+  temporary directory.
+- Activity grouping (`analysis/activity.py`): repeated identical commands are
+  shown once with an occurrence count, while every individual record keeps its
+  timestamp, source and evidence identifier. Commands that differ — two `wget`
+  calls to different URLs — never merge.
+- Stable evidence identifiers: EXEC-0001, CMD-0001, SESS-0001, ART-0001,
+  F-0001. Findings cite them, the PDF prints them, and the database stores them.
+- Command search over the whole record — command text, URLs, paths, users,
+  sources, evidence identifiers — not the executable alone. Searching
+  "github.com" or "holehe" finds the records that contain them.
+- Schema 3: evidence kind, full command line, normalized command,
+  reconstruction status, evidence strength, execution-confirmed flag and
+  reference on execution events; triage, reason and reference on findings; and
+  a `collection_limitations` table.
+
+### Changed
+
+- **The main report is 11 pages instead of 42.** It opens with collection
+  coverage and a triage table, leads with activity that needs attention, then
+  separates confirmed execution evidence from user-entered command history from
+  session activity. Detail moved into eight appendices. No evidence was
+  deleted: SQLite and the JSON export are unchanged, and the appendices carry
+  the records the body summarises.
+- Findings and collection limitations are separate. A telemetry source that was
+  switched off is a limit on the investigation, not a harmful-activity finding,
+  and it no longer pads the finding list.
+- The findings section leads with what needs attention; corroboration and
+  routine observations are counted and listed in Appendix C.
+- The investigation workspace gained an activity view with triage filtering,
+  search, the full command per record, and raw evidence behind a details
+  toggle.
+
+### Not verified in this release
+
+Windows telemetry parsing remains fixture-tested only; no Windows collector has
+been run against a real Windows host.
+
 ## 0.4.1 — 2026-09-13
 
 ### Fixed

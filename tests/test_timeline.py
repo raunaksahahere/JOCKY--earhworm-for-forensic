@@ -1,8 +1,8 @@
 """The merged timeline orders what was recorded and invents nothing."""
 from analysis import timeline as timeline_module
 from analysis.timeline import (
-    ANALYSIS_FINDING, EXECUTION_EVENT, FILE_EVENT, INVESTIGATION_STATE, OBSERVATION,
-    build_timeline,
+    ARTIFACT_OBSERVATION, COMMAND_HISTORY, EXECUTION_EVIDENCE, FINDING,
+    INVESTIGATION_STATE, PROCESS_SNAPSHOT, SESSION_EVENT, build_timeline,
 )
 
 
@@ -11,8 +11,10 @@ def execution(events):
 
 
 def event(stamp, name="tool", **extra):
-    return {"timestamp": stamp, "process_name": name, "source": "systemd journal",
-            "event_id": f"journal:{name}:{stamp}", "classification": "HISTORICAL_EVIDENCE",
+    return {"timestamp": stamp, "process_name": name, "executable": f"/usr/bin/{name}",
+            "source": "systemd journal", "event_id": f"journal:{name}:{stamp}",
+            "evidence_kind": EXECUTION_EVIDENCE, "execution_confirmed": True,
+            "classification": "HISTORICAL_EVIDENCE",
             "evidence_strength": "logged while running", **extra}
 
 
@@ -23,7 +25,8 @@ def test_entries_are_ordered_by_their_own_timestamps():
         event("2026-09-10T11:00:00+00:00", "middle"),
     ]))
 
-    assert [entry["title"].split(" —")[0] for entry in result["entries"]] == ["early", "middle", "late"]
+    assert [entry["extra_name"] if False else entry["title"].rsplit("/", 1)[-1]
+            for entry in result["entries"]] == ["early", "middle", "late"]
     assert result["undated_count"] == 0
 
 
@@ -55,9 +58,9 @@ def test_every_kind_is_distinguished():
         transitions=[{"state": "created", "timestamp": "2026-09-10T07:00:00+00:00", "detail": None}],
     )
 
-    assert set(result["kinds"]) == {EXECUTION_EVENT, FILE_EVENT, OBSERVATION,
-                                    ANALYSIS_FINDING, INVESTIGATION_STATE}
-    assert result["statistics"]["by_kind"][EXECUTION_EVENT] == 1
+    assert set(result["kinds"]) == {EXECUTION_EVIDENCE, ARTIFACT_OBSERVATION, PROCESS_SNAPSHOT,
+                                    FINDING, INVESTIGATION_STATE}
+    assert result["statistics"]["by_kind"][EXECUTION_EVIDENCE] == 1
 
 
 def test_a_file_time_is_labelled_as_metadata_not_a_witnessed_change():
@@ -75,7 +78,7 @@ def test_current_processes_are_never_presented_as_history():
          "classification": "CURRENT_OBSERVATION"}]})
 
     entry = result["entries"][0]
-    assert entry["kind"] == OBSERVATION
+    assert entry["kind"] == PROCESS_SNAPSHOT
     assert entry["classification"] == "CURRENT_OBSERVATION"
     assert "not the past" in entry["detail"]
 
@@ -97,7 +100,7 @@ def test_timeline_is_bounded(monkeypatch):
     assert result["truncated"] is True
     assert result["entry_count"] == 3
     # Truncation keeps the most recent, which is what an investigator reaches for.
-    assert result["entries"][-1]["title"].startswith("p9")
+    assert result["entries"][-1]["title"].endswith("p9")
 
 
 def test_empty_inputs_produce_an_empty_timeline():

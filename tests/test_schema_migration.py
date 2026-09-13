@@ -38,7 +38,7 @@ def upgraded(tmp_path):
 def test_upgrade_reaches_the_current_version(upgraded):
     store, _case = upgraded
 
-    assert store.rows("PRAGMA user_version")[0]["user_version"] == DATABASE_SCHEMA_VERSION == 2
+    assert store.rows("PRAGMA user_version")[0]["user_version"] == DATABASE_SCHEMA_VERSION == 3
 
 
 def test_existing_rows_survive_the_upgrade(upgraded):
@@ -60,7 +60,8 @@ def test_pre_existing_findings_get_a_default_confidence(upgraded):
 def test_new_entities_exist_and_are_empty(upgraded):
     store, _case = upgraded
 
-    for table in ("execution_events", "artifact_observations", "timeline_events", "finding_evidence"):
+    for table in ("execution_events", "artifact_observations", "timeline_events",
+                  "finding_evidence", "collection_limitations"):
         assert store.rows(f"SELECT * FROM {table}") == []
 
 
@@ -69,7 +70,7 @@ def test_upgrade_is_idempotent(upgraded):
 
     again = Store(store.paths)
 
-    assert again.rows("PRAGMA user_version")[0]["user_version"] == 2
+    assert again.rows("PRAGMA user_version")[0]["user_version"] == 3
     assert again.rows("SELECT id FROM investigations WHERE id=?", (case,))
 
 

@@ -29,6 +29,10 @@ def categories(result):
     return {finding["category"] for finding in result["findings"]}
 
 
+def limitation_categories(result):
+    return {item["category"] for item in result["limitations"]}
+
+
 def test_missing_executable_produces_a_qualified_finding():
     result = correlate(
         execution=execution([event("/usr/bin/removed")]),
@@ -101,24 +105,28 @@ def test_filename_indicators_become_findings_traceable_to_the_file():
 
 @pytest.mark.parametrize("status,severity", [
     (NOT_ENABLED, LOW), (PERMISSION_DENIED, MEDIUM)])
-def test_unavailable_telemetry_is_itself_a_finding(status, severity):
+def test_unavailable_telemetry_is_a_limitation_not_an_activity_finding(status, severity):
     result = correlate(execution=execution(sources=[
         source_record("systemd journal", AVAILABLE, detail="ok"),
         source_record("kernel audit log", status, detail="not readable")]))
 
-    finding = next(f for f in result["findings"] if f["category"] == "telemetry_unavailable")
-    assert finding["severity"] == severity
-    assert finding["classification"] == "UNAVAILABLE"
-    assert "outside the evidence available" in finding["explanation"]
+    item = next(f for f in result["limitations"] if f["category"] == "telemetry_unavailable")
+    assert item["severity"] == severity
+    assert item["classification"] == "UNAVAILABLE"
+    assert "outside the evidence available" in item["explanation"]
+    # A source that is switched off is a gap in the investigation, never a
+    # harmful activity finding.
+    assert "telemetry_unavailable" not in categories(result)
 
 
 def test_no_telemetry_at_all_is_a_high_severity_gap():
     result = correlate(execution=execution(sources=[
         source_record("systemd journal", NOT_ENABLED, detail="off")]))
 
-    finding = next(f for f in result["findings"] if f["category"] == "no_historical_telemetry")
-    assert finding["severity"] == HIGH
-    assert "cannot establish what ran before collection started" in finding["explanation"]
+    item = next(f for f in result["limitations"] if f["category"] == "no_historical_telemetry")
+    assert item["severity"] == HIGH
+    assert "cannot establish what ran before collection started" in item["explanation"]
+    assert result["findings"] == [], "an absent source is not activity"
 
 
 def test_truncation_and_undated_records_are_reported():
@@ -128,18 +136,34 @@ def test_truncation_and_undated_records_are_reported():
                    "statistics": {"by_collection_status": {"PERMISSION_DENIED": 3}}},
         processes={"truncated": True, "limits": {"max_processes": 5}})
 
-    assert "collection_truncated" in categories(result)
-    assert "undated_evidence" in categories(result)
-    assert "permission_gap" in categories(result)
-    truncations = [f for f in result["findings"] if f["category"] == "collection_truncated"]
+    assert "collection_truncated" in limitation_categories(result)
+    assert "undated_evidence" in limitation_categories(result)
+    assert "permission_gap" in limitation_categories(result)
+    truncations = [f for f in result["limitations"] if f["category"] == "collection_truncated"]
     assert len(truncations) == 3, "execution, artifact and process bounds are each reported"
+    assert result["statistics"]["limitation_count"] == len(result["limitations"])
 
 
 def test_clean_collection_produces_no_invented_findings():
     result = correlate(execution=execution(), artifacts={"artifacts": []}, processes={})
 
     assert result["findings"] == []
+    assert result["limitations"] == []
     assert result["statistics"]["findings_by_severity"] == {}
+
+
+def test_findings_carry_a_triage_category_and_a_short_reason():
+    result = correlate(
+        execution=execution([event("/tmp/stage")]),
+        artifacts={"artifacts": [artifact("/tmp/stage", notable_location="tmp")]})
+
+    for finding in result["findings"]:
+        assert finding["triage"] in {"POTENTIALLY_HARMFUL", "NEEDS_REVIEW",
+                                     "NOT_HARMFUL_ON_AVAILABLE_EVIDENCE"}
+        assert finding["triage_label"] and finding["why"]
+        assert len(finding["why"]) < 200, "the reason is a sentence, not the whole explanation"
+    # Most concerning first, so an investigator reads the right thing first.
+    assert result["findings"][0]["triage"] == "POTENTIALLY_HARMFUL"
 
 
 def test_every_finding_names_its_evidence():
