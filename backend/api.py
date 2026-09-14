@@ -492,6 +492,59 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
     def memory_analysis(analysis_id):
         return service.memory.get(analysis_id)
 
+
+    # --- search, assessments, case summary and the evidence package --------
+
+    @app.get("/api/v1/investigations/<case_id>/search")
+    def investigation_search(case_id):
+        service.get_case(case_id)
+        kinds = request.args.get("kinds")
+        return service.search(case_id, request.args.get("q", ""),
+                              kinds=kinds.split(",") if kinds else None)
+
+    @app.route("/api/v1/investigations/<case_id>/assessments", methods=["GET", "POST"])
+    def assessments(case_id):
+        if request.method == "POST":
+            return service.assess(case_id, body()), 201
+        service.get_case(case_id)
+        return {"items": service.assessments(case_id, subject_id=request.args.get("subject_id")),
+                "note": ("An investigator assessment is recorded beside the machine's "
+                         "classification, never over it. The machine's conclusion is immutable.")}
+
+    @app.get("/api/v1/investigations/<case_id>/summary")
+    def case_summary(case_id):
+        service.get_case(case_id)
+        return service.case_summary(case_id, persist=True)
+
+    @app.get("/api/v1/investigations/<case_id>/narrative")
+    def narrative(case_id):
+        service.get_case(case_id)
+        return {"items": service.narrative(case_id),
+                "note": "Each generated statement, with the evidence identifiers behind it."}
+
+    @app.post("/api/v1/investigations/<case_id>/package")
+    def evidence_package(case_id):
+        """The complete, self-describing evidence package."""
+        from backend.brief_pdf import render_routine_pdf
+        from backend.evidence_package import build_package
+        body()
+        report, routine = service.routine_activity(case_id)
+        case = None
+        if report.get("investigation", {}).get("case_id"):
+            case = service.casework.get_case(report["investigation"]["case_id"])
+        payload = build_package(
+            report=report, pdf=render_pdf(report), case=case,
+            endpoints=service.fleet.list_endpoints(),
+            evidence_sources=service.casework.list_evidence(
+                case_id=(case or {}).get("id")),
+            programs=service.store.rows(
+                "SELECT * FROM investigation_programs WHERE investigation_id=?", (case_id,)),
+            audit_events=service.casework.audit_trail(case_id=(case or {}).get("id")),
+            routine=routine, case_summary=service.case_summary(case_id, persist=True),
+            narrative=service.narrative(case_id), briefs=service.briefs(case_id))
+        return send_file(io.BytesIO(payload), mimetype="application/zip", as_attachment=True,
+                         download_name=f"jocky-evidence-{case_id}.zip")
+
     @app.post("/api/v1/shutdown")
     def stop():
         if shutdown is None:

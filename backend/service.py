@@ -13,6 +13,8 @@ from pathlib import Path
 from analysis import hashing
 from analysis.activity import assign_references, build_activity, build_routine
 from analysis.briefs import BriefError, build_brief
+from analysis.case_summary import build_case_summary
+from analysis.search import search as search_investigation
 from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
 from analysis.correlation import correlate
 from analysis.cross_source import correlate_sources
@@ -99,12 +101,21 @@ class Workstation:
         case_id = identifier()
         metadata = {"examiner": str(data.get("examiner", ""))[:240], "notes": str(data.get("notes", ""))[:10000],
                     "workstation": {"hostname": socket.gethostname(), "platform": platform.platform()}, "reference": str(data.get("reference", ""))[:240]}
+        # An investigation may belong to a case. Migration 5 added the column;
+        # nothing wrote it, so every collection looked unattached however it was
+        # created -- and the evidence package had no case to describe.
+        parent = data.get("case_id")
+        if parent:
+            self.casework.get_case(parent)
         with self.store.transaction() as db:
-            db.execute("INSERT INTO investigations(id,title,created_at,status,metadata) VALUES (?,?,?,?,?)", (case_id, title.strip(), now(), "created", encode(metadata)))
+            db.execute(
+                "INSERT INTO investigations(id,title,created_at,status,metadata,case_id)"
+                " VALUES (?,?,?,?,?,?)",
+                (case_id, title.strip(), now(), "created", encode(metadata), parent))
             db.execute("INSERT INTO transitions(investigation_id,state,timestamp) VALUES (?,?,?)", (case_id, "created", now()))
             self.casework.audit("investigation.created", object_type="investigation",
                                 object_id=case_id, investigation_id=case_id,
-                                case_id=data.get("case_id"), db=db)
+                                case_id=parent, db=db)
         return self.get_case(case_id)
 
     def get_case(self, case_id):
@@ -533,6 +544,109 @@ class Workstation:
                  encode(program["ir"]), PLAN_VERSION, encode(program["plan"]),
                  program["plan"]["platform"], encode(versions())))
 
+    def case_summary(self, case_id, *, persist=False):
+        """The generated conclusion, with the evidence behind each sentence.
+
+        Persisting it writes one row per statement, so the narrative in a report
+        can be audited against the records it was assembled from rather than
+        taken on trust.
+        """
+        report = self._latest_report(case_id)
+        summary = build_case_summary(report)
+        if persist:
+            with self.store.transaction() as db:
+                db.execute("DELETE FROM report_narrative WHERE investigation_id=? AND report_id=?",
+                           (case_id, report.get("report_id")))
+                for statement in summary["statements"]:
+                    db.execute(
+                        "INSERT INTO report_narrative (investigation_id,report_id,section,"
+                        " statement,evidence_ids,created_at) VALUES (?,?,?,?,?,?)",
+                        (case_id, report.get("report_id"), statement["section"],
+                         statement["statement"], encode(statement["evidence_ids"]), now()))
+        return summary
+
+    def narrative(self, case_id):
+        rows = self.store.rows(
+            "SELECT * FROM report_narrative WHERE investigation_id=? ORDER BY id", (case_id,))
+        for row in rows:
+            row["evidence_ids"] = json.loads(row["evidence_ids"]) if row["evidence_ids"] else []
+        return rows
+
+    def search(self, case_id, term, *, kinds=None):
+        return search_investigation(self._latest_report(case_id), term, kinds=kinds)
+
+    # --- investigator assessments -------------------------------------------
+    ASSESSMENTS = {"ACCEPT_AS_ROUTINE", "KEEP_FOR_REVIEW", "MARK_AS_RELEVANT"}
+
+    def assess(self, case_id, data):
+        """Record an investigator's judgement beside the machine's, never over it.
+
+        The machine classification and priority as they stood when the
+        assessment was made are copied in, so a later re-analysis cannot make it
+        look as though the investigator disagreed with something they never saw.
+        """
+        self.get_case(case_id)
+        assessment = (data.get("assessment") or "").strip().upper()
+        if assessment not in self.ASSESSMENTS:
+            raise ServiceError(
+                f"assessment must be one of {', '.join(sorted(self.ASSESSMENTS))}")
+        subject_type = (data.get("subject_type") or "").strip().lower()
+        subject_id = (data.get("subject_id") or "").strip()
+        if not subject_type or not subject_id:
+            raise ServiceError("subject_type and subject_id are required")
+
+        machine = self._machine_classification(case_id, subject_type, subject_id)
+        assessment_id = f"ASSESS-{identifier()[:8].upper()}"
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO investigator_assessments (id,investigation_id,case_id,subject_type,"
+                " subject_id,machine_classification,machine_priority,assessment,note,author,"
+                " created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (assessment_id, case_id, data.get("case_id"), subject_type, subject_id,
+                 machine.get("classification"), machine.get("priority"), assessment,
+                 str(data.get("note", ""))[:10000] or None,
+                 data.get("author") or local_actor(), now()))
+            self.casework.audit("assessment.recorded", object_type=subject_type,
+                                object_id=subject_id, investigation_id=case_id,
+                                detail={"assessment": assessment,
+                                        "machine_classification": machine.get("classification")},
+                                db=db)
+        return self.assessments(case_id, subject_id=subject_id)[0]
+
+    def _machine_classification(self, case_id, subject_type, subject_id):
+        """What JOCKY concluded about this subject, as stored."""
+        if subject_type in {"activity", "execution_event", "command"}:
+            rows = self.store.rows(
+                "SELECT triage, investigator_priority FROM execution_events"
+                " WHERE investigation_id=? AND reference=?", (case_id, subject_id))
+            if rows:
+                return {"classification": rows[0]["triage"],
+                        "priority": rows[0]["investigator_priority"]}
+        if subject_type == "finding":
+            rows = self.store.rows(
+                "SELECT triage, investigator_priority FROM findings"
+                " WHERE investigation_id=? AND reference=?", (case_id, subject_id))
+            if rows:
+                return {"classification": rows[0]["triage"],
+                        "priority": rows[0]["investigator_priority"]}
+        if subject_type == "artifact":
+            rows = self.store.rows(
+                "SELECT recognized_name, recognition_confidence FROM artifact_observations"
+                " WHERE investigation_id=? AND reference=?", (case_id, subject_id))
+            if rows:
+                return {"classification": rows[0]["recognized_name"],
+                        "priority": rows[0]["recognition_confidence"]}
+        return {"classification": None, "priority": None}
+
+    def assessments(self, case_id, *, subject_id=None, limit=500):
+        query = "SELECT * FROM investigator_assessments WHERE investigation_id=?"
+        args = [case_id]
+        if subject_id:
+            query += " AND subject_id=?"
+            args.append(subject_id)
+        return self.store.rows(query + " ORDER BY created_at DESC LIMIT ?",
+                               tuple(args) + (int(limit),))
+
     def _recognition_summary(self, case_id):
         """What the machine could account for, read back from stored rows."""
         rows = self.store.rows(
@@ -616,6 +730,7 @@ class Workstation:
                 "collection_window": execution.get("window"),
                 "recognition": recognition,
                 "supplementary": supplementary,
+                "evidence_sources": self.casework.list_evidence(case_id=case.get("case_id")),
                 # Separately named totals. One blurred "events" number invited
                 # the reader to treat typed commands as confirmed execution.
                 "record_counts": {
