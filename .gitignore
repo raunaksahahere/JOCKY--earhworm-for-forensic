@@ -43,6 +43,8 @@ reports/*.json
 reference-repo/
 referencereppos/
 docs/
+# The project documentation set is part of the deliverable.
+!docs/*.md
 
 # Editor and OS metadata
 .idea/

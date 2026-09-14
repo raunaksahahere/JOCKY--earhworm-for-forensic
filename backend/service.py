@@ -14,6 +14,7 @@ from analysis import hashing
 from analysis.activity import assign_references, build_activity
 from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
 from analysis.correlation import correlate
+from analysis.cross_source import correlate_sources
 from analysis.detections import detect
 from analysis.execution_history import collect_execution_history
 from analysis.execution_model import CollectionWindow
@@ -476,6 +477,9 @@ class Workstation:
             correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
             correlation["findings"].extend(
                 detect(drivers=supplementary.get("DRIVERS"), memory=supplementary.get("MEMORY")))
+            correlation["findings"].extend(correlate_sources(
+                execution=execution, artifacts=artifacts, browser=supplementary.get("BROWSER"),
+                usb=supplementary.get("USB")))
             activity = build_activity(execution.get("events", []) or [],
                                       artifacts=artifacts.get("artifacts", []) or [])
             self._persist_analysis(case_id, execution, artifacts, correlation, processes,

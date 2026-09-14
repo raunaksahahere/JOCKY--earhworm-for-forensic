@@ -50,7 +50,7 @@ class AgentError(RuntimeError):
 
 def capabilities() -> list:
     """The sources this agent can actually collect on this host."""
-    return plan_runner.selectable_sources()
+    return plan_runner.endpoint_sources()
 
 
 def describe_host() -> dict:
@@ -170,15 +170,26 @@ class Agent:
             return {"ok": False, "error": outcome["error"]}
         return {"ok": True, "result": outcome["result"]}
 
-    def poll_once(self) -> int:
-        """Claim, run and report whatever is waiting. Returns tasks handled."""
-        claimed = self.client.post("/api/v1/endpoints/tasks/claim", {"limit": 4})
-        tasks = claimed.get("tasks", [])
-        for task in tasks:
-            log.info("Collecting %s for task %s", task.get("source"), task.get("task_id"))
-            outcome = self.run_task(task)
-            self.client.post(f"/api/v1/endpoints/tasks/{task['task_id']}/result", outcome)
-        return len(tasks)
+    def poll_once(self, *, max_batches=8) -> int:
+        """Claim, run and report everything currently waiting.
+
+        The queue is drained rather than sampled: a collection dispatched as six
+        tasks should finish in one visit, not leave two of them sitting until
+        the next poll interval. The batch cap stops a misbehaving server from
+        holding the agent in an endless loop.
+        """
+        handled = 0
+        for _ in range(max_batches):
+            claimed = self.client.post("/api/v1/endpoints/tasks/claim", {"limit": 4})
+            tasks = claimed.get("tasks", [])
+            if not tasks:
+                break
+            for task in tasks:
+                log.info("Collecting %s for task %s", task.get("source"), task.get("task_id"))
+                outcome = self.run_task(task)
+                self.client.post(f"/api/v1/endpoints/tasks/{task['task_id']}/result", outcome)
+            handled += len(tasks)
+        return handled
 
     def run(self):
         """Heartbeat and poll until stopped."""

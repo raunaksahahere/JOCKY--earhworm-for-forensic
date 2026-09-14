@@ -79,8 +79,13 @@ def _observations(result, source):
             target = download.get("target_path") or download.get("url")
             if not target:
                 continue
-            yield ("download", target.rsplit("/", 1)[-1],
-                   {"url": download.get("url"), "profile": download.get("profile")})
+            # Keyed on the origin as well as the filename. "report.pdf" is the
+            # name of a thousand unrelated files, and pairing two hosts on that
+            # alone would manufacture a link that is not there.
+            url = download.get("url") or ""
+            origin = url.split("//", 1)[-1].split("/", 1)[0] if "//" in url else "unknown origin"
+            yield ("download", f"{target.rsplit('/', 1)[-1]} from {origin}",
+                   {"url": url, "profile": download.get("profile")})
     elif source == "USB":
         for device in result.get("devices") or []:
             serial = (device.get("serial") or "").strip()

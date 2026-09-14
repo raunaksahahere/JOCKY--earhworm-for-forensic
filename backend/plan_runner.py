@@ -16,20 +16,28 @@ from __future__ import annotations
 
 import logging
 
+from analysis.artifacts import collect_artifacts
 from analysis.browser import collect_browser_artifacts
 from analysis.drivers import collect_driver_inventory
 from analysis.memory import analyze_memory_image
 from analysis.network import collect_network
 from analysis.system_services import collect_services
+from analysis.execution_history import collect_execution_history
+from analysis.system import get_system_info
 from analysis.usb import collect_removable_media
+from backend.collectors import process_snapshot
 from compiler.plan import READY
 
 #: source -> (callable, dotted path the plan must agree with, evidence action)
 #:
-#: SYSTEM, PROCESSES, EXECUTION and FILES are absent on purpose: they are the
-#: baseline every investigation runs, and service._collect owns them so that a
-#: plan can never omit the evidence the report is built from.
+#: This is the complete list of what any plan can cause to happen, locally or on
+#: an enrolled endpoint.
 REGISTRY = {
+    "SYSTEM": (get_system_info, "analysis.system.get_system_info", "SYSTEM INFO"),
+    "PROCESSES": (process_snapshot, "backend.collectors.process_snapshot", "PROCESSES"),
+    "EXECUTION": (collect_execution_history,
+                  "analysis.execution_history.collect_execution_history", "EXECUTION HISTORY"),
+    "FILES": (collect_artifacts, "analysis.artifacts.collect_artifacts", "ARTIFACTS"),
     "NETWORK": (collect_network, "analysis.network.collect_network", "NETWORK"),
     "BROWSER": (collect_browser_artifacts, "analysis.browser.collect_browser_artifacts", "BROWSER"),
     "USB": (collect_removable_media, "analysis.usb.collect_removable_media", "USB"),
@@ -38,7 +46,17 @@ REGISTRY = {
     "SERVICES": (collect_services, "analysis.system_services.collect_services", "SERVICES"),
 }
 
+#: Sources the local collector always runs itself, in a fixed order, before any
+#: program-selected source. A program can ask for more evidence but can never
+#: leave the report without the evidence it is built from, so these are skipped
+#: when running a plan locally and collected normally on an endpoint.
+BASELINE = ("SYSTEM", "PROCESSES", "EXECUTION", "FILES")
+
 SOURCE_DESCRIPTIONS = {
+    "SYSTEM": "local operating system",
+    "PROCESSES": "psutil current process snapshot",
+    "EXECUTION": "documented operating system execution telemetry",
+    "FILES": "files referenced by historical execution evidence",
     "NETWORK": "local network configuration and socket table",
     "BROWSER": "local browser history and download records",
     "USB": "removable media identity, kernel attach events and mounts",
@@ -50,9 +68,17 @@ SOURCE_DESCRIPTIONS = {
 #: Sources that read an investigator-supplied artefact rather than the live host.
 NEEDS_ARGUMENT = {"MEMORY"}
 
+#: Collectors that complete in one bounded read and take no cancellation token.
+UNCANCELLABLE = {"SYSTEM"}
+
 
 def selectable_sources() -> list:
-    """Sources an investigator may add to a collection on this build."""
+    """Sources an investigator may add to a local collection on this build."""
+    return sorted(set(REGISTRY) - set(BASELINE))
+
+
+def endpoint_sources() -> list:
+    """Sources an enrolled endpoint can collect. Endpoints have no baseline."""
     return sorted(REGISTRY)
 
 
@@ -64,6 +90,17 @@ def _arguments(source, task, options):
     collector never receives the option dictionary wholesale.
     """
     window = options.get("window_hours")
+    if source == "EXECUTION":
+        return {"window_hours": window,
+                "include_command_lines": bool(options.get("include_command_lines"))}
+    if source == "PROCESSES":
+        return {"include_command_lines": bool(options.get("include_command_lines"))}
+    if source == "FILES":
+        # COLLECT FILES names absolute paths in the program, and validation has
+        # already rejected relative ones.
+        return {"selected_paths": tuple(task.get("arguments") or ())}
+    if source == "SYSTEM":
+        return {}
     if source == "BROWSER":
         return {"window_hours": window}
     if source == "USB":
@@ -74,7 +111,7 @@ def _arguments(source, task, options):
     return {}
 
 
-def runnable_tasks(plan: dict) -> list:
+def runnable_tasks(plan: dict, *, skip_baseline=True) -> list:
     """Plan tasks this build can actually execute, with their callables.
 
     A READY task naming a collector the registry does not recognise is dropped
@@ -84,6 +121,8 @@ def runnable_tasks(plan: dict) -> list:
     runnable, rejected = [], []
     for task in plan.get("tasks", []):
         if task.get("status") != READY:
+            continue
+        if skip_baseline and task["source"] in BASELINE:
             continue
         entry = REGISTRY.get(task["source"])
         if entry is None:
@@ -108,4 +147,6 @@ def call(entry: dict, *, options: dict, cancel=None):
                 "source_status": "NOT_COLLECTED",
                 "warnings": [f"{task['source']} was requested without an image to analyse. "
                              "Nothing was collected and nothing is claimed."]}
+    if task["source"] in UNCANCELLABLE:
+        return entry["function"](**arguments)
     return entry["function"](cancel=cancel, **arguments)
