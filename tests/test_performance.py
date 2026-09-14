@@ -121,6 +121,10 @@ def test_one_failing_collector_does_not_lose_the_others(tmp_path, monkeypatch):
 
     monkeypatch.setitem(plan_runner.REGISTRY, "NETWORK",
                         (explode, "analysis.network.collect_network", "NETWORK"))
+    working = {"status": "success", "classification": "CURRENT_OBSERVATION", "complete": True}
+    monkeypatch.setitem(plan_runner.REGISTRY, "USB",
+                        (lambda **_kwargs: working,
+                         "analysis.usb.collect_removable_media", "USB"))
     service = Workstation(Store(Paths.resolve(str(tmp_path / "workspace"))))
     try:
         case = service.create_case({"title": "partial"})

@@ -3,6 +3,7 @@
 The central property: a plan can only cause things the registry already lists.
 A program is not a way to run code.
 """
+import os
 import threading
 
 import pytest
@@ -127,6 +128,9 @@ def test_a_task_that_overruns_is_stopped_and_reported(monkeypatch):
     assert outcome["ok"] is False and outcome["error"]["code"] == "timeout"
 
 
+@pytest.mark.skipif(os.name != "posix",
+                    reason="POSIX mode bits; Windows ACLs are a separate question this "
+                           "build has not answered")
 def test_the_agent_stores_its_credential_privately(tmp_path):
     identity = tmp_path / "endpoint.json"
     agent = Agent(ControlPlaneClient("http://unused"), identity_path=identity)

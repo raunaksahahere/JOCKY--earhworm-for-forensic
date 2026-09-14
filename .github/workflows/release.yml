@@ -124,7 +124,11 @@ jobs:
           if-no-files-found: error
 
   windows:
-    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["windows","both"]'), inputs.targets)
+    # Only when someone asks for it. A tag builds Linux alone, because no
+    # Windows host has validated any of this and publishing an installer that
+    # nobody has run would contradict every claim in docs/RequirementMatrix.md.
+    # Build it deliberately, from the Actions tab, to see where Windows stands.
+    if: github.event_name == 'workflow_dispatch' && contains(fromJSON('["windows","both"]'), inputs.targets)
     needs: version
     runs-on: windows-latest
     steps:
@@ -190,9 +194,9 @@ jobs:
   publish:
     # Only for a v* tag, or an explicit request. Building never publishes.
     #
-    # A skipped platform is not a failure: a Linux-only run still publishes its
-    # Debian package. A platform that was asked for and failed blocks the
-    # release, so a half-built release is never tagged as complete.
+    # A skipped platform is not a failure: a tag builds and publishes Linux
+    # alone. A platform that was asked for and failed blocks the release, so a
+    # half-built release is never tagged as complete.
     if: >-
       !cancelled()
       && (github.ref_type == 'tag' || inputs.publish)

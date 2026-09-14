@@ -66,9 +66,19 @@ def test_notes_are_stored_against_a_subject(client):
 
 # --- programs -----------------------------------------------------------------
 def test_a_program_can_be_compiled_without_collecting(client):
-    payload = post(client, "/api/v1/programs/compile", {"program": PROGRAM}).get_json()
+    # The platform is named rather than inherited from the host: the same
+    # program yields different plans per platform, which is the whole point.
+    payload = post(client, "/api/v1/programs/compile",
+                   {"program": PROGRAM, "platform": "linux"}).get_json()
     assert payload["plan"]["ready_task_count"] == 2
     assert payload["explanation"] and payload["plan_explanation"]
+
+
+def test_compiling_for_windows_names_what_it_cannot_collect(client):
+    payload = post(client, "/api/v1/programs/compile",
+                   {"program": PROGRAM, "platform": "windows"}).get_json()
+    assert payload["plan"]["platform_validated"] is False
+    assert "USB" in {item["source"] for item in payload["plan"]["unsupported"]}
 
 
 def test_an_invalid_program_returns_a_program_error(client):
@@ -139,7 +149,8 @@ def test_an_endpoint_credential_does_not_open_the_investigator_api(client):
 def test_dispatch_queues_tasks_that_carry_no_command(client):
     identity = _enroll(client)
     response = post(client, "/api/v1/collections/dispatch",
-                    {"program": PROGRAM, "endpoints": [identity["endpoint_id"]]})
+                    {"program": PROGRAM, "platform": "linux",
+                     "endpoints": [identity["endpoint_id"]]})
     assert response.status_code == 202
     assert "No task carries a command" in response.get_json()["note"]
 

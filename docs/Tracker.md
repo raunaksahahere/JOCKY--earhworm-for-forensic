@@ -29,6 +29,7 @@ State of the work as of application version 0.7.0, database schema 6.
 | Item | Why it is open | What it needs |
 |------|----------------|---------------|
 | **Windows validation** | No Windows host has run any of it | A Windows machine. No amount of code closes this. |
+| **Python suite on Windows** | 17 tests assume POSIX paths, permissions or `/proc`; they predate this pass and fail on `windows-latest` | Per-test platform handling, once there is a Windows host to validate against |
 | **Real memory image** | None was available | A lab image and Volatility3 |
 | **Genuine multi-host fleet** | Both demo endpoints are one machine | Two separate machines |
 | **Move off SQLite** | Not needed yet | A workload with concurrent endpoint writes. Path documented in `docs/Architecture.md`. |
@@ -61,3 +62,10 @@ State of the work as of application version 0.7.0, database schema 6.
   reported as such. Only a hash match is high confidence.
 - **`stale` means JOCKY has not heard from an endpoint**, not that the machine
   is off. The API and the UI both say so.
+
+## Release policy
+
+A `v*` tag builds and publishes the **Linux** package only. The Windows job is
+run deliberately from the Actions tab, because publishing an installer no
+Windows host has ever run would contradict every claim in
+`docs/RequirementMatrix.md`.
