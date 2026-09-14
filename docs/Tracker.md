@@ -1,6 +1,6 @@
 # Tracker
 
-State of the work as of application version 0.7.0, database schema 6.
+State of the work as of application version 0.8.0, database schema 7.
 
 ## Done
 
@@ -15,12 +15,23 @@ State of the work as of application version 0.7.0, database schema 6.
 | Authorized multi-endpoint control plane | Done, Linux validated |
 | Endpoint agent | Done, Linux validated |
 | Cross-source correlation | Done |
-| Cross-host correlation | Done, validated only degenerately |
+| Cross-host correlation | Done, **real multi-host validated** on two containers |
 | Reproducibility record | Done |
 | Synthetic scenarios A–F | Done |
 | End-to-end demo | Done |
 | Case file screen, source picker | Done |
-| Test suites | 708 Python, 151 Flutter |
+| Software recognition | Done, Linux validated |
+| Routine / recognized presentation | Done, Linux validated |
+| Review briefs (artifact, finding, activity, lead, thread) | Done |
+| Routine activity report | Done |
+| Investigator search across every surface | Done |
+| Investigator assessments | Done |
+| Case summary with narrative traceability | Done |
+| Self-describing evidence package | Done |
+| Memory workflow: register, hash, verify, analyse, link | Done; analysis fixture-only |
+| Forensic container identification | Done (identification only) |
+| Storage abstraction proof | Done, 11 tests |
+| Test suites | 804 Python, 158 Flutter |
 | Documentation set | Done |
 | Linux `.deb` release | Done |
 
@@ -30,12 +41,23 @@ State of the work as of application version 0.7.0, database schema 6.
 |------|----------------|---------------|
 | **Windows validation** | No Windows host has run any of it | A Windows machine. No amount of code closes this. |
 | **Python suite on Windows** | 17 tests assume POSIX paths, permissions or `/proc`; they predate this pass and fail on `windows-latest` | Per-test platform handling, once there is a Windows host to validate against |
-| **Real memory image** | None was available | A lab image and Volatility3 |
-| **Genuine multi-host fleet** | Both demo endpoints are one machine | Two separate machines |
+| **Real memory image** | None was available; the workflow around it is complete, the analysis path is fixture-only | A lab image and Volatility3 installed |
+| **Forensic container extraction** | Deliberately out of scope; containers are identified, hashed and preserved | An integration with ewfmount or equivalent, if it turns out to be wanted |
+| **Two physical machines** | Multi-host is validated on two containers, which share the host kernel | Two separate kernels, for kernel-level evidence |
 | **Move off SQLite** | Not needed yet | A workload with concurrent endpoint writes. Path documented in `docs/Architecture.md`. |
 | **Wider detection ruleset** | Deliberately six, all explainable | More rules that can each state their evidence and confidence |
 
-## Bugs found and fixed in this pass
+## Bugs found and fixed in the 0.8.0 pass
+
+| Bug | Where | How it was found |
+|-----|-------|------------------|
+| A configurable snap root that matching ignored, so the option silently did nothing | `analysis/recognition.py` | Writing the tests |
+| Investigations never stored their `case_id` — migration 5 added the column and nothing wrote it, so every collection looked unattached | `backend/service.py` | Building the evidence package manifest |
+| Findings in the report payload carried no evidence references; the rows were stored separately and never joined back | `backend/service.py` | Building finding briefs |
+| The Linux adapter offered a `LOGS` source with no collector behind it | `compiler/plan.py` | The CI boundary check |
+| Widget assertions matched the screen's raw-JSON debug dump rather than the list an investigator reads | Flutter tests | Writing the recognition tests |
+
+## Bugs found and fixed in the 0.7.0 pass
 
 | Bug | Where | How it was found |
 |-----|-------|------------------|

@@ -101,6 +101,40 @@ execution record *and* an artifact, rather than one observation alone.
 collected suggests harm, which is a statement about the evidence, not about the
 activity.
 
+## Recognition
+
+What a file is, on the evidence of the machine's own records — package
+ownership, snap metadata, a vendor installation layout. Separate from every
+judgement above, because "what is this" and "does this matter" are different
+questions and answering the first must not be allowed to answer the second.
+
+```
+recognized: true/false
+confidence: HIGH | MODERATE | LOW | NONE
+basis_codes: package_manager_ownership | snap_metadata | vendor_layout
+             | trusted_system_location
+```
+
+`trusted_system_location` is deliberately **not** a recognition. A file in
+`/usr/bin` that no package claims is reported as being in a place, not as being
+a thing, because which of those two it is matters. See `docs/Recognition.md`.
+
+## Presentation
+
+How much of the investigator's attention a record asks for, kept apart from what
+the evidence supports:
+
+```
+ROUTINE_RECOGNIZED   the machine's own records account for it and nothing
+                     raised a concern
+FOR_REVIEW           neither routine nor concerning
+NEEDS_ATTENTION      a concern signal fired
+```
+
+Changing a record's presentation never changes its triage category. Recognition
+lowers the score the way a system location does and cannot cancel a concern
+signal.
+
 ## Identifiers
 
 ```
@@ -135,10 +169,33 @@ registered, and saying so is the point.
 ## What is not evidence
 
 The **audit trail** records what JOCKY and the investigator did. **Notes**
-record what the investigator thinks. Neither is evidence about the examined
-host, and both are stored in separate tables from everything above, because an
-interpretation that ends up looking like an observation is worse than no
-interpretation at all.
+record what the investigator thinks. **Assessments** record an investigator's
+judgement about one record. **Review briefs** and the **case summary** are
+JOCKY's own prose about the evidence.
+
+None of these is evidence about the examined host, and all are stored in
+separate tables from everything above, because an interpretation that ends up
+looking like an observation is worse than no interpretation at all.
+
+An assessment stores the machine's classification and priority **as they stood
+when it was made**, alongside the investigator's own. The machine's conclusion
+is never edited. A record that lost the original when an investigator disagreed
+would be a record of the disagreement's outcome rather than of the disagreement.
+
+Each sentence of the case summary is stored in `report_narrative` with the
+evidence identifiers behind it, so the generated prose can be audited against
+the records it was assembled from.
+
+## Memory evidence
+
+An image is registered as an evidence source, hashed, and re-verified
+immediately before analysis. A changed image is refused: attributing findings to
+bytes that are no longer there is what this exists to prevent.
+
+Each normalized memory record carries the plugin that produced it and whether
+the value was read directly from the image or derived from structures in it —
+the second depends on the tool's symbol table matching the kernel that produced
+the image, which is worth a reader knowing.
 
 ## Synthetic data
 

@@ -65,17 +65,49 @@ was where a third of the real bugs were found.
 
 Each is now a test.
 
+## The 0.8.0 pass
+
+Built in this order, because each rests on the one before:
+
+1. **Recognition**, since the presentation category, the routine report and
+   half of every brief depend on knowing what a file is.
+2. **Migration 7**, verified against the real development database.
+3. **Briefs**, then the routine report, then their PDFs.
+4. **Real multi-host validation**, which is the gap the matrix had been honest
+   about for a release.
+5. **The memory workflow**, around an analysis path that still has no real image.
+6. **Search, assessments, the case summary, the evidence package manifest.**
+7. **The storage-abstraction proof**, which turns a documented claim into a
+   checked one.
+8. Tests, client, documentation, release.
+
+### What that found
+
+- A configurable snap root that matching ignored, so the option silently did
+  nothing.
+- Investigations never stored their `case_id` at all. Migration 5 added the
+  column and nothing ever wrote it, so every collection looked unattached
+  however it was created — found only when the evidence-package manifest had no
+  case to describe.
+- Findings in the report payload carried no evidence references; the rows were
+  stored in a separate table and never joined back, so a finding brief could
+  cite nothing.
+- Flutter assertions that matched the screen's raw-JSON debug dump rather than
+  the list an investigator reads.
+
 ## What remains
 
 **Windows validation.** Everything Windows is written and fixture-tested.
 Nothing has run on a Windows host. This is the largest outstanding gap and no
-amount of further code closes it — it needs a machine.
+amount of further code closes it — it needs a machine. It was explicitly
+deferred for the 0.8.0 pass.
 
 **A real memory image.** `analysis/memory.py` drives Volatility3, and that path
 has never seen a real image.
 
-**A genuine multi-host fleet.** Two agents on one machine exercise the protocol
-but make cross-host correlation degenerate.
+**Two physical machines.** Multi-host is now validated on two containers with
+separate filesystems, hostnames and process tables. Containers share a kernel,
+so kernel-level evidence across hosts is still unvalidated.
 
 **The move off SQLite.** Documented in `docs/Architecture.md`, deliberately not
 performed. The abstraction that makes it cheap exists; doing it now without a

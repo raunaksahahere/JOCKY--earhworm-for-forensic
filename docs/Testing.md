@@ -2,8 +2,8 @@
 
 ```bash
 cd application
-.venv/bin/python -m pytest -q                # 708 tests
-cd flutter_client && flutter test            # 151 tests
+.venv/bin/python -m pytest -q                # 804 tests
+cd flutter_client && flutter test            # 158 tests
 flutter analyze
 ```
 
@@ -28,6 +28,11 @@ labelled as one.
 | `test_cross_source.py` | Cross-source and cross-host correlation |
 | `test_schema_migration.py` | Every migration, including a real v4 database |
 | `test_performance.py` | Scaling, ceilings, and degradation under failure |
+| `test_recognition.py` | Each recognition layer, and the negative cases that matter most |
+| `test_briefs.py` | Briefs, routine grouping, search and the case summary |
+| `test_multihost.py` | Real two-container validation, memory workflow, evidence package |
+| `test_assessments.py` | Investigator judgement stored beside the machine's, never over it |
+| `test_storage_abstraction.py` | The boundary the scale-out path depends on |
 | `test_correlation.py`, `test_triage.py`, `test_threads.py`, `test_timeline.py` | The analysis pipeline |
 | `test_execution_history.py`, `test_execution_windows.py` | Telemetry collection |
 | `test_reports.py`, `test_report_presentation.py` | Report construction and rendering |
@@ -83,12 +88,18 @@ than uptime, that the audit trail is not evidence about the host.
 **Windows.** The Windows collectors are fixture-tested. No Windows host has run
 them. Nothing in the suite validates Windows behaviour.
 
-**Real memory images.** `analysis/memory.py` is exercised only against fixtures.
-The Volatility3-driving path has never seen a real image.
+**Real memory images.** The workflow around an image — registration, hashing,
+re-verification before analysis, provenance, findings linkage — is fully tested.
+The Volatility3-driving path itself has never seen a real image.
 
-**A genuine multi-host fleet.** The only multi-endpoint run was two agents on
-one machine, where every cross-host observable is trivially shared. Scenario D
-covers the multi-host case, and it is synthetic.
+**Two physical machines.** Multi-host is validated on two Docker containers with
+genuinely separate filesystems, hostnames and process tables — the validation
+proves that separation before it asserts anything else, and runs as a test. But
+containers share the host kernel, so kernel-level evidence is not covered, and
+the validation deliberately asserts nothing that depends on it.
+
+**Forensic container extraction.** Containers are identified from their headers
+and preserved. Nothing extracts one, by design.
 
 ## CI
 

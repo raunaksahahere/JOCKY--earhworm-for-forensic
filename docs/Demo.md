@@ -64,10 +64,23 @@ evidence under `synthetic-scenarios/`.
 ## The demo's own limitation
 
 Both endpoints are agents running on the same machine. Every cross-host
-observable is therefore trivially shared, and step 10 says so in its own
-output. What step 10 demonstrates is the mechanism. **Scenario D** is the
-multi-host case with genuinely separate evidence, and it is the one to read for
-what cross-host correlation actually produces.
+observable is therefore trivially shared, and step 10 says so in its own output.
+What step 10 demonstrates is the mechanism.
+
+For real multi-host validation, run:
+
+```bash
+python3 validation/multihost.py
+```
+
+That starts two containers with genuinely separate filesystems, hostnames and
+process tables, proves the separation before asserting anything else, then
+plants one file on both hosts and one on only one and checks the correlation
+finds the first and not the second. It skips honestly if Docker is unavailable
+rather than passing.
+
+**Scenario D** remains the *synthetic* multi-host scenario. The two are not
+conflated.
 
 ## What lands in `demo-output/`
 
@@ -82,6 +95,11 @@ what cross-host correlation actually produces.
 | `cross-host-correlation.json` | Observables shared between endpoints. |
 | `audit-trail.json` | What JOCKY and the examiner did, separate from evidence. |
 | `synthetic-scenarios/scenario-*.json` | The six lab scenarios, fully labelled. |
+
+Beyond the demo, an investigation also produces a **review brief** for any one
+subject (`docs/ReviewBriefs.md`), a **routine activity report** for everything
+the machine accounted for, and a **self-describing evidence package** with a
+manifest and a digest of every file in it.
 
 `report.json` and `endpoint-tasks.json` are large — tens of megabytes on a
 machine with real history. That is the detailed evidence package: it holds every

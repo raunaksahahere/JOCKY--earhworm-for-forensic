@@ -20,7 +20,8 @@ Off to the side, and deliberately not in that chain:
 
 ```
 compiler/   language -> AST -> IR -> execution plan
-analysis/   collectors, normalization, correlation, detection, reporting
+analysis/   collectors, normalization, recognition, correlation, detection,
+            briefs, search, case summary
 endpoint/   the agent that runs on another authorized machine
 scenarios/  synthetic lab data
 ```
@@ -116,6 +117,18 @@ What a move to PostgreSQL would involve:
 What would *not* change: the analysis pipeline, the compiler, the API surface,
 the report, the client.
 
+**This is now checked rather than asserted.** `tests/test_storage_abstraction.py`
+fails if the analysis layer reaches for JOCKY's store, if a service uses anything
+outside the three-method `Store` interface, or if SQL appears in a module that
+did not have it before. It also runs the casework and fleet layers against a
+substitute store that records every call, which is the proof rather than the
+argument.
+
+One documented exception: `analysis/browser.py` opens SQLite to read a browser's
+own history database as evidence, having copied it aside first. That is evidence
+collection, not storage, and a rule conflating the two would force the collector
+to be rewritten during a database migration for no reason.
+
 This is documented rather than built. Rewriting working storage without a
 workload that needs it is churn, and the abstraction that makes the rewrite
 cheap already exists.
@@ -124,13 +137,16 @@ cheap already exists.
 
 | | |
 |--|--|
-| Application | 0.7.0 |
+| Application | 0.8.0 |
 | API | 1 |
 | Report schema | 5 |
-| Database schema | 6 |
+| Database schema | 7 |
 | IR | 1 |
 | Plan | 1 |
 | Detection ruleset | 1 |
+| Recognition | 1 |
+| Brief format | 1 |
+| Evidence package | 1 |
 
 Every report records the versions of everything that produced it, and
 `investigation_programs` records the program, IR, plan and versions for each

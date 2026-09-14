@@ -111,14 +111,24 @@ owning process. `limits.packet_capture` is `false`. No traffic is intercepted.
 
 **PARTIALLY IMPLEMENTED · FIXTURE/SYNTHETIC**
 
-`analysis/memory.py` drives Volatility3 when it is present and normalizes its
-process rows. Provenance is always one of `REAL`, `FIXTURE` or `UNAVAILABLE`.
+`analysis/memory.py` and `backend/memory_workflow.py`, `tests/test_multihost.py`.
 
-**The gap:** no real memory image has been analysed during development, because
-none was available. The tool-driving path is exercised only against fixtures. It
-is read-only by construction — `limits` records `memory_written: false` and
-`code_executed: false` — and JOCKY does not acquire memory; it analyses an image
-the investigator supplies.
+The workflow is complete: an image is registered as an evidence source, hashed,
+and **re-verified immediately before analysis** — a changed image is refused,
+because attributing findings to bytes that are no longer there is the failure
+this exists to prevent. The analysis learns the image's platform by trying each
+platform's process listing, normalizes processes, loaded modules and memory
+mappings, and records per record which plugin produced it and whether the value
+was read directly or derived. Results carry the digest of the image and a
+provenance statement. Findings are linked to the analysis.
+
+**The gap, unchanged:** no real memory image has been analysed, because none was
+available. The Volatility3-driving path is exercised only against fixtures.
+`GET /api/v1/memory/capability` reports plainly whether a tool is installed, and
+on the development host it is not.
+
+Read-only by construction: `limits` records `memory_written: false` and
+`code_executed: false`, and JOCKY does not acquire memory.
 
 ## K — File and disk evidence
 
@@ -167,15 +177,28 @@ See `docs/EndpointProtocol.md` for why an endpoint cannot be sent a command.
 
 ## P — Multi-endpoint correlation
 
-**IMPLEMENTED · LINUX VALIDATED (degenerate) · see limitation**
+**IMPLEMENTED · REAL LINUX MULTI-HOST VALIDATED**
 
-`analysis/fleet_correlation.py`. Shared file hashes, remote addresses, drivers,
-downloads and removable devices.
+`analysis/fleet_correlation.py`, `validation/multihost.py`,
+`tests/test_multihost.py`.
 
-**The limitation:** the only multi-host run performed was two agents on one
-machine, where every observable is trivially shared. The demo says so in its own
-output. Scenario D is the multi-host case with genuinely separate evidence, and
-it is synthetic.
+The previous pass validated this degenerately — two agents on one machine, where
+every observable is trivially shared — and said so. That is now fixed.
+`validation/multihost.py` runs two Docker containers and **proves the separation
+before it proves anything else**: distinct hostnames, distinct process tables
+both beginning at pid 1, and a file planted on one host demonstrably absent on
+the other. It then plants one file on both and one on only one, and asserts the
+shared SHA-256 correlates naming both endpoints while the unique one does not
+correlate at all. Both assertions pass, and it runs in the test suite.
+
+**What this does not establish:** containers share the host kernel, so
+kernel-level sources — loaded modules, the kernel log — would report the host's
+state on both endpoints. The validation deliberately asserts nothing that
+depends on them. Two containers are two Linux environments, not two physical
+machines; network path, hardware and firmware evidence are not covered.
+
+Scenario D remains the **synthetic** multi-host scenario and is labelled as such.
+The two are not conflated anywhere.
 
 ## Q — Investigation thread model
 
@@ -187,12 +210,21 @@ quadratic regression that once stalled collection.
 
 ## R — Scalability path
 
-**IMPLEMENTED (documented, not built)**
+**IMPLEMENTED (documented and tested, deliberately not built)**
 
-`docs/Architecture.md`, "The path off SQLite". Domain models, repositories and
-storage are already separate; the transition is described rather than performed,
-because rewriting working storage without a workload that needs it would be
-churn.
+`docs/Architecture.md`, "The path off SQLite", plus
+`tests/test_storage_abstraction.py` (11 tests).
+
+The documented path rests on a claim that only the storage layer knows it is
+SQLite. A claim like that rots silently, so it is now checked: the analysis layer
+never reaches for JOCKY's store, the `Store` interface is three methods, only
+seven modules contain SQL at all, and the casework and fleet layers are exercised
+against a substitute store that records what was asked of it.
+
+One documented exception: `analysis/browser.py` opens SQLite to read a *browser's*
+history database as evidence, having copied it aside first. That has nothing to
+do with where JOCKY keeps its records, and a second test asserts it still copies
+and still opens read-only.
 
 ## S — Performance and reliability
 
@@ -245,8 +277,9 @@ checkout.
 **IMPLEMENTED · LINUX VALIDATED**
 
 `lib/features/casefile/case_file_screen.dart` (cases, evidence sources,
-endpoints, audit trail) and the collection source picker in the device screen.
-151 Flutter tests.
+endpoints, audit trail), the collection source picker, the recognition badge,
+the presentation filter, the review brief dialog and the routine export.
+158 Flutter tests.
 
 ## Z — Documentation
 
@@ -276,5 +309,112 @@ it. Nothing in this project should be described as working on Windows.
 
 | Suite | Count |
 |-------|-------|
-| Python | 708 |
-| Flutter | 151 |
+| Python | 804 |
+| Flutter | 158 |
+
+---
+
+## Completion-pass features
+
+## AB — Software recognition
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`analysis/recognition.py`, `analysis/data/software_reference.json`,
+`tests/test_recognition.py` (17). See `docs/Recognition.md`.
+
+Four layers: package ownership (421,000 paths from 2,784 packages on the
+development host, nothing hardcoded), snap metadata, 14 vendor layout
+descriptors each requiring a marker file, and location — which is reported as a
+location and never as an identity. Every result states its basis, names its
+source, cites the evidence it annotates and states its limits. No safety score;
+a test asserts the words "safe", "clean", "benign" and "trusted" appear nowhere
+in a result.
+
+Nothing is executed: a test reads the module's source and fails on any execution
+path. Recognition is context and cannot cancel a concern signal — a recognized
+interpreter running from `/tmp` with remote content piped into it still scores
+POTENTIALLY HARMFUL.
+
+## AC — Routine / recognized classification
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+A presentation category kept apart from the triage category. On the development
+host it splits 709 activities into 405 routine, 299 for review and 5 needing
+attention, with every triage category unchanged. A recognized interpreter whose
+arguments were not recorded deliberately stays for review.
+
+## AD — Review briefs
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`analysis/briefs.py`, `backend/brief_pdf.py`, `tests/test_briefs.py` (31).
+See `docs/ReviewBriefs.md`.
+
+Briefs for artifacts, findings, activities, leads and threads; 1–2 page PDF,
+JSON, and an on-screen dialog with the same sections in the same order. Every
+statement traces to a stored record: a browser link requires a download record
+naming that path, a network link requires a socket record owned by that process,
+and proximity in a timeline never produces either. Generated briefs are stored
+with their evidence identifiers and audited.
+
+## AE — Routine activity report
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+A separate optional document, never the primary report. 404 routine activities
+collapse to nine groups with their evidence identifiers attached. Called
+Routine / Recognized, never Safe, and every copy carries the sentence saying it
+is not a guarantee.
+
+## AF — Investigator search
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`analysis/search.py`. Artifacts, hashes, executables, full commands, URLs,
+domains, endpoints, users, threads, leads, findings, recognized names,
+classification, priority and evidence sources. Each hit names the field that
+matched, so a term found in a URL is distinguishable from the same term in a
+filename. Searching a recognized name finds records whose command line never
+contains it.
+
+## AG — Investigator assessments
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`investigator_assessments`, `tests/test_assessments.py` (10). Stored beside the
+machine's classification, never over it, with the machine's conclusion copied in
+as it stood. A test asserts the machine's stored triage is byte-identical after
+an assessment that disagrees with it.
+
+## AH — Case summary and narrative traceability
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`analysis/case_summary.py`, `report_narrative`. Every generated sentence is
+emitted with the evidence identifiers behind it and stored per statement. A test
+asserts the summary never asserts a reassuring claim without negating it.
+
+## AI — Evidence package integrity
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+`backend/evidence_package.py`. A manifest naming the case, investigation, every
+version, the endpoints, the registered sources with digests and integrity
+history, the collectors and their status, the programs, and the SHA-256 of every
+file as written. `verify_package` re-hashes them; a test alters one file and
+asserts verification fails naming it.
+
+## AJ — File and disk evidence
+
+**IMPLEMENTED · LINUX VALIDATED (identification only)**
+
+Containers are identified from their own header — EWF, EWF2, AFF, QCOW, VMDK,
+VHD, raw — and the record says what JOCKY can and cannot do with each.
+
+**Deliberately not implemented:** JOCKY does not parse forensic containers.
+Writing another image parser would be the wrong kind of work when mature
+read-only tooling exists. A container is named, hashed and preserved, and the
+record says what would expose its contents (`ewfmount`, `qemu-nbd`). No
+container has been extracted or validated beyond identification.

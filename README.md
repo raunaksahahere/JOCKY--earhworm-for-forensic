@@ -12,13 +12,23 @@ Each source is its own step, so one that is unavailable becomes a named gap in
 the report rather than a failed collection. Open **Case File** for cases,
 registered evidence sources, authorized endpoints and the audit trail.
 
+Software the machine's own records account for — anything a package manager,
+snap or known installation layout placed — is marked as recognized and can be
+filtered out of view, so a collection of two thousand records opens on the few
+hundred that need a person. Any single record, artifact, finding, lead or thread
+will produce a **review brief**: a one or two page answer to "what is this and
+do I care", with every statement traceable to the record it rests on.
+
 ### What it will not do
 
 A process snapshot is not a historical timeline. A shell history line is not
 proof a command ran. A filename indicator is a reason to look, not a verdict. A
 hash compares bytes; it does not establish authenticity. A driver matching the
 known-abused reference is present on this machine, which is not evidence it was
-abused here.
+abused here. Recognized software is software the machine can account for, which
+is not a finding that it is safe — and recognition never cancels a concern
+signal, so a recognized interpreter running from a temporary directory with
+remote content piped into it is still a lead.
 
 JOCKY implements no bypass, injection, stealth, persistence or exploit feature.
 It does not capture packets, read browser secrets, acquire memory, load or
@@ -45,6 +55,8 @@ about a minute. See [docs/Demo.md](docs/Demo.md).
 | | |
 |--|--|
 | [Architecture](docs/Architecture.md) | Layering, the compilation chain, storage, the path off SQLite |
+| [Recognition](docs/Recognition.md) | How JOCKY says what a file is, without being fooled by its name |
+| [Review briefs](docs/ReviewBriefs.md) | One-page answers, the routine report, the evidence package |
 | [Investigation language](docs/InvestigationLanguage.md) | Grammar, statements, compilation |
 | [Evidence model](docs/EvidenceModel.md) | The vocabulary for what is known and what is not |
 | [Security boundaries](docs/SecurityBoundaries.md) | What is absent, and where each boundary is enforced |

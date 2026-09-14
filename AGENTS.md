@@ -36,7 +36,8 @@ Before adding anything:
 ## Where things live
 
 ```
-analysis/    collectors, normalization, correlation, detection
+analysis/    collectors, normalization, recognition, correlation, detection,
+             briefs, search, case summary
              knows nothing about storage, HTTP or cases
 compiler/    language -> AST -> IR -> plan
              knows nothing about collectors
@@ -59,6 +60,27 @@ Keep it.
 4. Test it against the real host, not only a fixture.
 5. Add a test asserting the limits it declares.
 
+## Adding a recognition source
+
+Recognition answers "what is this" from the machine's own records. Two rules:
+
+1. **Never execute anything.** Reading a version with `--version` changes the
+   machine under examination and runs a binary whose provenance is the open
+   question. A test reads the module's source and fails on any execution path.
+2. **A name is not evidence.** Every layer must rest on something a file's
+   location alone cannot fake — package ownership, snap metadata, a marker file
+   inside an installation. `/tmp/python3` must never be recognized as Python.
+
+Recognition is context. It may lower a score; it may never cancel a concern
+signal.
+
+## Writing a brief section
+
+A brief may only say what a stored record supports. "Downloaded by the browser"
+needs a download record naming that exact path. Proximity in a timeline is not a
+link. Where the evidence does not support the statement, say so and say what the
+absence does not mean.
+
 ## Adding a detection
 
 Every rule goes in `analysis/detections.RULES` with an id and a description, and
@@ -75,8 +97,9 @@ destructively.
 ## Tests
 
 ```sh
-.venv/bin/python -m pytest -q                       # 708
-cd flutter_client && flutter test && flutter analyze # 151
+.venv/bin/python -m pytest -q                       # 804
+cd flutter_client && flutter test && flutter analyze # 158
+python3 validation/multihost.py                     # real two-host validation
 ```
 
 Tests here assert claims, not coverage. If you add a claim to a docstring, a
@@ -84,9 +107,13 @@ report or a UI string, add the test that keeps it true.
 
 ## Honesty in documentation
 
-`docs/RequirementMatrix.md` carries a status for every requirement. Three are
-fixture-only and say so. Everything Windows says WINDOWS READY / NOT VALIDATED
-because no Windows host has run any of it.
+`docs/RequirementMatrix.md` carries a status for every requirement. Memory
+analysis is fixture-only and says so. Everything Windows says WINDOWS READY /
+NOT VALIDATED because no Windows host has run any of it.
+
+Multi-host is validated on two containers, and the matrix states what containers
+do not cover: they share a kernel, so kernel-level evidence across hosts is
+still unvalidated. Never describe a container validation as two machines.
 
 Do not mark something validated that has not been run. Do not describe Windows
 as working. If you close one of those gaps, update the matrix and say what you
