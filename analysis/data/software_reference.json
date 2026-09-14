@@ -1,0 +1,110 @@
+{
+  "name": "JOCKY vendor installation layout reference",
+  "version": 1,
+  "description": "Descriptors for software that installs outside any package manager. Each entry requires a marker file to exist inside the installation, so a directory named after the software is not enough to recognize it. This is deliberately small: package and snap metadata already account for everything the system installed, and a large list of names would make recognition depend on filenames again.",
+  "note": "Version strings are read from metadata already on disk. Nothing in this file causes a program to run.",
+  "entries": [
+    {
+      "name": "Flutter SDK",
+      "category": "development toolchain",
+      "path_contains": "/flutter/",
+      "marker": "bin/cache/flutter.version.json",
+      "version_json_key": "frameworkVersion",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "Dart SDK",
+      "category": "language runtime",
+      "path_contains": "/dart-sdk/",
+      "marker": "version",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "Node.js (vendor install)",
+      "category": "language runtime",
+      "path_contains": "/node_modules/",
+      "marker": "package.json",
+      "version_json_key": "version",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "Android SDK",
+      "category": "development toolchain",
+      "path_contains": "/Android/Sdk/",
+      "marker": "licenses",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "Brave Browser",
+      "category": "web browser",
+      "path_contains": "/opt/brave.com/",
+      "marker": "brave/brave",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "Google Chrome",
+      "category": "web browser",
+      "path_contains": "/opt/google/chrome/",
+      "marker": "chrome",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "Microsoft Visual Studio Code",
+      "category": "editor",
+      "path_contains": "/usr/share/code/",
+      "marker": "resources/app/package.json",
+      "version_json_key": "version",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "JetBrains IDE",
+      "category": "editor",
+      "path_contains": "/JetBrains/",
+      "marker": "build.txt",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "Miniconda or Anaconda",
+      "category": "language toolchain",
+      "path_contains": "/conda/",
+      "marker": "conda-meta/history",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "Python virtual environment",
+      "category": "language environment",
+      "path_contains": "/.venv/",
+      "marker": "pyvenv.cfg",
+      "version_regex": "version\\s*=\\s*([0-9][0-9.]*)",
+      "confidence": "HIGH"
+    },
+    {
+      "name": "Rust toolchain (rustup)",
+      "category": "development toolchain",
+      "path_contains": "/.rustup/",
+      "marker": "settings.toml",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "Go toolchain",
+      "category": "development toolchain",
+      "path_contains": "/go/pkg/",
+      "marker": "mod",
+      "confidence": "LOW"
+    },
+    {
+      "name": "Ollama",
+      "category": "application",
+      "path_contains": "/usr/local/lib/ollama/",
+      "marker": "libggml-base.so",
+      "confidence": "MODERATE"
+    },
+    {
+      "name": "containerd",
+      "category": "container runtime",
+      "path_contains": "/opt/containerd/",
+      "marker": "bin",
+      "confidence": "MODERATE"
+    }
+  ]
+}

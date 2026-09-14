@@ -139,6 +139,38 @@ MIGRATIONS = {1: (
     # Enrollment, heartbeat, dispatch and result activity, for the audit trail.
     "CREATE TABLE endpoint_events (id INTEGER PRIMARY KEY, endpoint_id TEXT REFERENCES endpoints(id), timestamp TEXT NOT NULL, event TEXT NOT NULL, outcome TEXT NOT NULL, detail TEXT)",
     "CREATE INDEX endpoint_event_time ON endpoint_events(endpoint_id,timestamp DESC)",
+), 7: (
+    # Recognition is computed once during analysis and stored with the record.
+    # Recomputing it per screen would re-read the package database every time an
+    # investigator scrolled a list.
+    "ALTER TABLE artifact_observations ADD COLUMN recognition TEXT",
+    "ALTER TABLE artifact_observations ADD COLUMN recognized_name TEXT",
+    "ALTER TABLE artifact_observations ADD COLUMN recognition_confidence TEXT",
+    "CREATE INDEX artifact_recognized ON artifact_observations(investigation_id,recognized_name)",
+    "ALTER TABLE execution_events ADD COLUMN recognition TEXT",
+    "ALTER TABLE execution_events ADD COLUMN recognized_name TEXT",
+    "CREATE INDEX event_recognized ON execution_events(investigation_id,recognized_name)",
+    # An investigator's judgement, stored beside the machine's rather than over
+    # it. The machine classification and priority are copied in at the moment
+    # the assessment is made, so a later re-analysis cannot make it look as
+    # though the investigator disagreed with something they never saw.
+    "CREATE TABLE investigator_assessments (id TEXT PRIMARY KEY, investigation_id TEXT REFERENCES investigations(id), case_id TEXT REFERENCES cases(id), subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, machine_classification TEXT, machine_priority TEXT, assessment TEXT NOT NULL, note TEXT, author TEXT NOT NULL, created_at TEXT NOT NULL, superseded_by TEXT)",
+    "CREATE INDEX assessment_subject ON investigator_assessments(investigation_id,subject_type,subject_id,created_at DESC)",
+    # A generated brief is part of the record of the investigation: what JOCKY
+    # said about one subject, from which evidence, under which versions.
+    "CREATE TABLE review_briefs (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), case_id TEXT REFERENCES cases(id), subject_type TEXT NOT NULL, subject_id TEXT NOT NULL, created_at TEXT NOT NULL, author TEXT, payload TEXT NOT NULL, evidence_ids TEXT NOT NULL, versions TEXT NOT NULL)",
+    "CREATE INDEX brief_subject ON review_briefs(investigation_id,subject_type,subject_id)",
+    # Which evidence each generated paragraph rests on, so the narrative in the
+    # report can be audited rather than taken on trust.
+    "CREATE TABLE report_narrative (id INTEGER PRIMARY KEY, investigation_id TEXT NOT NULL REFERENCES investigations(id), report_id TEXT, section TEXT NOT NULL, statement TEXT NOT NULL, evidence_ids TEXT NOT NULL, created_at TEXT NOT NULL)",
+    "CREATE INDEX narrative_investigation ON report_narrative(investigation_id,section)",
+    # One memory-analysis run against one registered image.
+    "CREATE TABLE memory_analyses (id TEXT PRIMARY KEY, investigation_id TEXT REFERENCES investigations(id), case_id TEXT REFERENCES cases(id), evidence_source_id TEXT REFERENCES evidence_sources(id), image_path TEXT, image_sha256 TEXT, tool TEXT, tool_version TEXT, plugin TEXT, provenance TEXT NOT NULL, status TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT, result TEXT, error TEXT, versions TEXT NOT NULL)",
+    "CREATE INDEX memory_analysis_case ON memory_analyses(case_id,started_at DESC)",
+    # File and forensic-image handling state for a registered source.
+    "ALTER TABLE evidence_sources ADD COLUMN processing_status TEXT NOT NULL DEFAULT 'REGISTERED'",
+    "ALTER TABLE evidence_sources ADD COLUMN container_format TEXT",
+    "ALTER TABLE evidence_sources ADD COLUMN format_detail TEXT",
 )}
 
 

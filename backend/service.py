@@ -16,6 +16,7 @@ from analysis.artifacts import artifact_from_hash_result, collect_artifacts, mer
 from analysis.correlation import correlate
 from analysis.cross_source import correlate_sources
 from analysis.detections import detect
+from analysis.recognition import SoftwareIndex, recognize_artifacts, recognize_events
 from analysis.execution_history import collect_execution_history
 from analysis.execution_model import CollectionWindow
 from analysis.files import list_files
@@ -279,7 +280,7 @@ class Workstation:
         return state, result, evidence_id
 
     def _persist_analysis(self, case_id, execution, artifacts, correlation, processes, evidence_ids,
-                          activity):
+                          activity, recognition=None):
         """Write execution events, artifacts, findings and the timeline.
 
         One transaction: an investigation must never be left holding findings
@@ -305,8 +306,9 @@ class Workstation:
                     "  process_name,executable,pid,parent_pid,account,classification,collection_status,"
                     "  payload,evidence_kind,full_command_line,normalized_command,"
                     "  command_reconstruction_status,command_evidence_strength,execution_confirmed,"
-                    "  reference,triage,investigator_priority,priority_score)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "  reference,triage,investigator_priority,priority_score,"
+                    "  recognition,recognized_name)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier(), case_id, execution_evidence, event.get("source"),
                      event.get("source_record_id"), event.get("timestamp"), event.get("last_seen"),
                      event.get("process_name"), event.get("executable"), event.get("pid"),
@@ -317,17 +319,23 @@ class Workstation:
                      event.get("command_evidence_strength"), 1 if event.get("execution_confirmed") else 0,
                      event.get("reference"), triage_of(event.get("reference"), "category"),
                      triage_of(event.get("reference"), "investigator_priority"),
-                     triage_of(event.get("reference"), "score")))
+                     triage_of(event.get("reference"), "score"),
+                     encode(event.get("recognition")) if event.get("recognition") else None,
+                     (event.get("recognition") or {}).get("recognized_name")))
             for record in artifacts.get("artifacts", []) or []:
                 db.execute(
                     "INSERT INTO artifact_observations"
                     " (id,investigation_id,evidence_id,path,filename,extension,size_bytes,modified,"
-                    "  hash,collection_status,source,payload,reference)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "  hash,collection_status,source,payload,reference,"
+                    "  recognition,recognized_name,recognition_confidence)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier(), case_id, artifact_evidence, record["path"], record["filename"],
                      record.get("extension"), record.get("size_bytes"), record.get("modified"),
                      record.get("hash"), record["collection_status"], record.get("source", "unknown"),
-                     encode(record), record.get("reference")))
+                     encode(record), record.get("reference"),
+                     encode(record.get("recognition")) if record.get("recognition") else None,
+                     (record.get("recognition") or {}).get("recognized_name"),
+                     (record.get("recognition") or {}).get("confidence")))
             for index, finding in enumerate(correlation["findings"], start=1):
                 finding_id = identifier()
                 finding["reference"] = f"F-{index:04d}"
@@ -474,6 +482,12 @@ class Workstation:
             # prints them, and an investigator uses them to find the record.
             assign_references(execution.get("events", []) or [],
                               artifacts=artifacts.get("artifacts", []) or [])
+            # Recognition before triage: what the machine can account for is
+            # context the classifier needs, and computing it once here is what
+            # keeps it off the investigator's screen-render path.
+            index = SoftwareIndex()
+            recognition = recognize_artifacts(artifacts.get("artifacts", []) or [], index=index)
+            recognition.update(recognize_events(execution.get("events", []) or [], index=index))
             correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
             correlation["findings"].extend(
                 detect(drivers=supplementary.get("DRIVERS"), memory=supplementary.get("MEMORY")))
@@ -483,7 +497,7 @@ class Workstation:
             activity = build_activity(execution.get("events", []) or [],
                                       artifacts=artifacts.get("artifacts", []) or [])
             self._persist_analysis(case_id, execution, artifacts, correlation, processes,
-                                   evidence_ids, activity)
+                                   evidence_ids, activity, recognition=recognition)
 
             self.transition(case_id, "finalizing")
             status = "cancelled" if event.is_set() else "partially_completed" if failures or incomplete else "completed"
@@ -516,6 +530,29 @@ class Workstation:
                  encode(program["ir"]), PLAN_VERSION, encode(program["plan"]),
                  program["plan"]["platform"], encode(versions())))
 
+    def _recognition_summary(self, case_id):
+        """What the machine could account for, read back from stored rows."""
+        rows = self.store.rows(
+            "SELECT recognized_name, recognition_confidence, count(*) AS occurrences"
+            " FROM artifact_observations WHERE investigation_id=? AND recognized_name IS NOT NULL"
+            " GROUP BY recognized_name, recognition_confidence ORDER BY occurrences DESC, recognized_name",
+            (case_id,))
+        total = self.store.rows(
+            "SELECT count(*) AS n FROM artifact_observations WHERE investigation_id=?",
+            (case_id,))[0]["n"]
+        events = self.store.rows(
+            "SELECT count(*) AS n FROM execution_events WHERE investigation_id=?"
+            " AND recognized_name IS NOT NULL", (case_id,))[0]["n"]
+        return {
+            "artifacts_examined": total,
+            "artifacts_recognized": sum(row["occurrences"] for row in rows),
+            "events_recognized": events,
+            "software": [{"name": row["recognized_name"], "count": row["occurrences"],
+                          "confidence": row["recognition_confidence"]} for row in rows],
+            "note": ("Recognition states what a file is, on the evidence of package metadata and "
+                     "installation layout. It is not a statement that the file is safe."),
+        }
+
     def _evidence_payload(self, case_id, action):
         """The payload of the most recent evidence record for one step."""
         for record in reversed(self.related(case_id, "evidence")):
@@ -542,6 +579,11 @@ class Workstation:
         events = [dict(row["payload"], reference=row.get("reference"))
                   for row in self.related(case_id, "execution_events")
                   if isinstance(row.get("payload"), dict)] or (execution.get("events", []) or [])
+        # Recognition is read back from storage, not recomputed: the package
+        # database is not re-read every time a report is rendered.
+        for record in artifacts:
+            record.setdefault("recognition", None)
+        recognition = self._recognition_summary(case_id)
         activity = build_activity(events, artifacts=artifacts)
         counts = activity["counts_by_kind"]
         threads = build_threads(activity["groups"])
@@ -555,6 +597,7 @@ class Workstation:
                 "summary": self._summary(case, execution, processes, artifacts, findings,
                                          limitations, available, sources, counts, activity),
                 "collection_window": execution.get("window"),
+                "recognition": recognition,
                 # Separately named totals. One blurred "events" number invited
                 # the reader to treat typed commands as confirmed execution.
                 "record_counts": {

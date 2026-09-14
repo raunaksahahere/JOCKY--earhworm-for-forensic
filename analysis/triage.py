@@ -68,6 +68,25 @@ PRIORITY = {POTENTIALLY_HARMFUL: 0, NEEDS_REVIEW: 1, NOT_HARMFUL: 2}
 
 # Score thresholds. Deliberately coarse: the point is a defensible ordering, not
 # a false precision an investigator cannot argue with.
+#: How a record is *presented*, which is a different question from what the
+#: evidence supports. An investigator opening a collection of two thousand
+#: records needs the ones the machine can account for to fall away, but the
+#: triage category behind each one is untouched: nothing here changes what
+#: JOCKY concluded, only how much of the investigator's attention it asks for.
+ROUTINE_RECOGNIZED = "ROUTINE_RECOGNIZED"
+NEEDS_ATTENTION = "NEEDS_ATTENTION"
+FOR_REVIEW = "FOR_REVIEW"
+
+PRESENTATION_LABELS = {
+    ROUTINE_RECOGNIZED: "Routine / recognized",
+    FOR_REVIEW: "For review",
+    NEEDS_ATTENTION: "Needs attention",
+}
+
+ROUTINE_DISCLAIMER = (
+    "Routine / recognized means the machine's own records account for this activity and nothing "
+    "in the collected evidence raised a concern. It is not a guarantee of safety.")
+
 INVESTIGATE_FIRST_AT = 4
 REVIEW_AT = 1
 
@@ -127,6 +146,24 @@ _ROUTINE = (
 )
 
 
+HIGH_CONFIDENCE = "HIGH"
+
+#: Plain-language names for how something was recognized, so the reason an
+#: investigator reads is a sentence rather than an identifier.
+_BASIS_PHRASES = {
+    "package_manager_ownership": "the package manager's record of which package owns this path",
+    "snap_metadata": "the installed snap's own metadata",
+    "vendor_layout": "the vendor's installation layout and its marker file",
+    "trusted_system_location": "its location in an OS-managed directory",
+}
+
+
+def _basis_phrase(recognition):
+    codes = recognition.get("basis_codes") or []
+    phrases = [_BASIS_PHRASES.get(code, code) for code in codes]
+    return " and ".join(phrases) if phrases else "recognition"
+
+
 def _lower(path):
     return (path or "").replace("\\", "/").lower() if "/" in (path or "") else (path or "").lower()
 
@@ -178,11 +215,12 @@ class Classification:
     """One triage decision: what the evidence says, and what to look at first."""
 
     __slots__ = ("category", "reason", "evidence_references", "signals", "limitations",
-                 "score", "priority", "recommended_action", "unknowns")
+                 "score", "priority", "recommended_action", "unknowns", "presentation",
+                 "presentation_reason")
 
     def __init__(self, category, reason, *, evidence_references=(), signals=(),
                  limitations=(), score=0, priority=PRIORITY_3, recommended_action=None,
-                 unknowns=()):
+                 unknowns=(), presentation=None, presentation_reason=None):
         self.category = category
         self.reason = reason
         self.evidence_references = list(evidence_references)
@@ -192,6 +230,14 @@ class Classification:
         self.priority = priority
         self.recommended_action = recommended_action
         self.unknowns = list(unknowns)
+        self.presentation = presentation or (
+            ROUTINE_RECOGNIZED if category == NOT_HARMFUL
+            else NEEDS_ATTENTION if category == POTENTIALLY_HARMFUL else FOR_REVIEW)
+        self.presentation_reason = presentation_reason or reason
+
+    @property
+    def presentation_label(self):
+        return PRESENTATION_LABELS[self.presentation]
 
     @property
     def label(self):
@@ -216,6 +262,9 @@ class Classification:
             "priority_label": self.priority_label,
             "priority_rank": self.priority_rank,
             "score": self.score,
+            "presentation": self.presentation,
+            "presentation_label": self.presentation_label,
+            "presentation_reason": self.presentation_reason,
             "signals": [signal.to_dict() if isinstance(signal, Signal) else signal
                         for signal in self.signals],
             "why": [signal.detail if isinstance(signal, Signal) else str(signal)
@@ -343,6 +392,29 @@ def classify_event(event, *, artifacts_by_path=None, source_count=1, correlated_
                                   f"Recognised as {description}."))
             break
 
+    # Recognition is context, never a verdict. It lowers priority the way a
+    # system location does, and for the same reason: the machine's own records
+    # account for the file. It cannot cancel a concern signal, because weighing
+    # them against each other is the whole point of scoring rather than
+    # short-circuiting -- a recognized interpreter fetching a remote script is
+    # still a recognized interpreter fetching a remote script.
+    recognition = event.get("recognition") or {}
+    if recognition.get("recognized") and recognition.get("confidence") in {"HIGH", "MODERATE"}:
+        named = recognition.get("recognized_name") or "known software"
+        weight = -2 if recognition.get("confidence") == "HIGH" else -1
+        if is_interpreter(image, name):
+            # Recognizing the interpreter says nothing about what it was asked
+            # to run, which is the only question that matters about one.
+            weight = -1
+        signals.append(Signal(
+            "recognized_software", weight,
+            f"The image is accounted for as {named}"
+            + (f" {recognition['version']}" if recognition.get("version") else "")
+            + f" ({', '.join(recognition.get('basis_codes') or ['recognition'])})."))
+    elif recognition.get("basis_codes") == ["trusted_system_location"]:
+        unknowns.append(
+            "What this file is: it sits in a system directory that no package claims.")
+
     system_image = in_system_location(image)
     interpreter = is_interpreter(image, name)
     if system_image and not transient:
@@ -413,6 +485,31 @@ def classify_event(event, *, artifacts_by_path=None, source_count=1, correlated_
                   "cannot be determined from it.")
         action = None
 
+    # --- presentation: how much of the investigator's attention to ask for ---
+    presentation, presentation_reason = None, None
+    if concerning:
+        presentation = NEEDS_ATTENTION
+    elif category == NOT_HARMFUL:
+        presentation = ROUTINE_RECOGNIZED
+        presentation_reason = reason
+    elif recognition.get("recognized") and recognition.get("confidence") == HIGH_CONFIDENCE:
+        # An interpreter whose arguments were never recorded stays for review:
+        # recognizing `python3` says nothing about the script it was handed, and
+        # that script is the only thing about it worth knowing.
+        if interpreter and not command:
+            presentation = FOR_REVIEW
+            presentation_reason = (
+                f"The image is accounted for as {recognition.get('recognized_name')}, but it is an "
+                "interpreter and this source did not record what it was asked to run.")
+        else:
+            presentation = ROUTINE_RECOGNIZED
+            presentation_reason = (
+                f"{recognition.get('recognized_name')}"
+                + (f" {recognition['version']}" if recognition.get("version") else "")
+                + ", accounted for by "
+                + _basis_phrase(recognition)
+                + ", in its expected location, with no concern signal in the collected evidence.")
+
     # --- priority: where attention is worth spending -------------------------
     if score >= INVESTIGATE_FIRST_AT:
         priority = PRIORITY_1
@@ -424,7 +521,8 @@ def classify_event(event, *, artifacts_by_path=None, source_count=1, correlated_
     return Classification(
         category, reason,
         evidence_references=_reference(event), signals=signals, limitations=limitations,
-        score=score, priority=priority,
+        score=score, priority=priority, presentation=presentation,
+        presentation_reason=presentation_reason,
         recommended_action=action if priority in {PRIORITY_1, PRIORITY_2} else None,
         unknowns=unknowns)
 
