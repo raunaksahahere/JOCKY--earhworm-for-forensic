@@ -413,6 +413,59 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
     def endpoint_result(task_id):
         return service.fleet.submit_result(request.endpoint_identity, task_id, body()), 201
 
+
+    # --- review briefs and the routine activity report ---------------------
+    # A brief answers "what is this and do I care" about one subject, from
+    # evidence already stored. It never re-runs collection.
+
+    @app.post("/api/v1/investigations/<case_id>/briefs")
+    def create_brief(case_id):
+        data = body()
+        return service.brief(case_id, subject_type=data.get("subject_type"),
+                             subject_id=data.get("subject_id")), 201
+
+    @app.get("/api/v1/investigations/<case_id>/briefs")
+    def list_briefs(case_id):
+        service.get_case(case_id)
+        return {"items": service.briefs(case_id)}
+
+    @app.post("/api/v1/investigations/<case_id>/briefs/export")
+    def export_brief(case_id):
+        """The same brief as a one or two page PDF, ready to attach to a case."""
+        from backend.brief_pdf import render_brief_pdf
+        data = body()
+        brief = service.brief(case_id, subject_type=data.get("subject_type"),
+                              subject_id=data.get("subject_id"))
+        subject = brief["subject"]["id"]
+        if data.get("format") == "json":
+            return send_file(
+                io.BytesIO(json.dumps(brief, indent=2, default=str).encode()),
+                mimetype="application/json", as_attachment=True,
+                download_name=f"JOCKY_ReviewBrief_{subject}.json")
+        return send_file(io.BytesIO(render_brief_pdf(brief)), mimetype="application/pdf",
+                         as_attachment=True,
+                         download_name=f"JOCKY_ReviewBrief_{subject}.pdf")
+
+    @app.get("/api/v1/investigations/<case_id>/routine")
+    def routine_activity(case_id):
+        _report, routine = service.routine_activity(case_id)
+        return routine
+
+    @app.post("/api/v1/investigations/<case_id>/routine/export")
+    def export_routine(case_id):
+        """Deliberately a separate document, never the primary report."""
+        from backend.brief_pdf import render_routine_pdf
+        data = body()
+        report, routine = service.routine_activity(case_id)
+        if data.get("format") == "json":
+            return send_file(
+                io.BytesIO(json.dumps(routine, indent=2, default=str).encode()),
+                mimetype="application/json", as_attachment=True,
+                download_name=f"jocky-routine-{case_id}.json")
+        pdf = render_routine_pdf(report, routine, detailed=bool(data.get("detailed")))
+        return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,
+                         download_name=f"jocky-routine-{case_id}.pdf")
+
     @app.post("/api/v1/shutdown")
     def stop():
         if shutdown is None:

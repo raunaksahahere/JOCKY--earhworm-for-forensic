@@ -401,3 +401,84 @@ def build_leads(ranked) -> list[dict]:
     for index, lead in enumerate(leads[:MAX_LEADS], start=1):
         lead["lead_id"] = f"LEAD-{index:03d}"
     return leads[:MAX_LEADS]
+
+
+#: Grouping for the routine activity report. Printing eleven hundred identical
+#: version checks is not a record; it is a way of ensuring nobody reads one.
+MAX_ROUTINE_GROUPS = 120
+MAX_ROUTINE_COMMANDS = 60
+
+
+def _routine_key(group):
+    """What makes two routine activities the same kind of thing.
+
+    Recognized software groups by what it is. Everything else groups by the
+    reason triage called it routine, which is the sentence an investigator will
+    read anyway.
+    """
+    classification = group.get("classification") or {}
+    records = group.get("records") or []
+    recognition = next((record.get("recognition") for record in records
+                        if (record.get("recognition") or {}).get("recognized")), None)
+    if recognition:
+        name = recognition.get("recognized_name")
+        version = recognition.get("version")
+        return (f"{name}{' ' + version if version else ''}",
+                "Accounted for by " + ", ".join(recognition.get("basis_codes") or ["recognition"])
+                + ".")
+    for signal in classification.get("signals") or []:
+        if signal.get("name") == "routine_command":
+            return signal["detail"].removeprefix("Recognised as ").rstrip("."), signal["detail"]
+        if signal.get("name") == "managed_system_service":
+            return "managed system services", signal["detail"]
+    if classification.get("signals"):
+        for signal in classification["signals"]:
+            if signal.get("name") == "system_location":
+                return "operating-system images in system directories", signal["detail"]
+    return "other routine activity", classification.get("reason") or "No concern signal was raised."
+
+
+def build_routine(activity, *, presentation="ROUTINE_RECOGNIZED") -> dict:
+    """Group everything presented as routine, for the separate routine report.
+
+    Returns groups rather than rows. The evidence identifiers travel with each
+    group so a reader can still reach any individual record.
+    """
+    groups = activity.get("groups") or []
+    routine = [group for group in groups
+               if (group.get("classification") or {}).get("presentation") == presentation]
+
+    buckets = {}
+    for group in routine:
+        label, basis = _routine_key(group)
+        bucket = buckets.setdefault(label, {
+            "label": label, "basis": basis, "activities": 0, "occurrences": 0,
+            "commands": [], "evidence_references": [],
+        })
+        bucket["activities"] += 1
+        bucket["occurrences"] += group.get("occurrences", len(group.get("records") or []))
+        command = (group.get("full_command_line") or group.get("executable")
+                   or group.get("process_name"))
+        if command and command not in bucket["commands"]:
+            bucket["commands"].append(command)
+        for record in group.get("records") or []:
+            if record.get("reference"):
+                bucket["evidence_references"].append(record["reference"])
+
+    ordered = sorted(buckets.values(), key=lambda bucket: (-bucket["occurrences"], bucket["label"]))
+    for bucket in ordered:
+        bucket["commands"] = bucket["commands"][:MAX_ROUTINE_COMMANDS]
+
+    return {
+        "groups": ordered[:MAX_ROUTINE_GROUPS],
+        "group_count": len(ordered),
+        "totals": {
+            "activities": len(routine),
+            "records": sum(bucket["occurrences"] for bucket in buckets.values()),
+            "all_activities": len(groups),
+            "excluded": len(groups) - len(routine),
+        },
+        "note": ("Routine / recognized means the machine's own records account for this activity "
+                 "and nothing in the collected evidence raised a concern. It is not a guarantee "
+                 "of safety."),
+    }

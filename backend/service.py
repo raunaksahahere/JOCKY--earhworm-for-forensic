@@ -11,7 +11,8 @@ import time
 from pathlib import Path
 
 from analysis import hashing
-from analysis.activity import assign_references, build_activity
+from analysis.activity import assign_references, build_activity, build_routine
+from analysis.briefs import BriefError, build_brief
 from analysis.artifacts import artifact_from_hash_result, collect_artifacts, merge_artifacts
 from analysis.correlation import correlate
 from analysis.cross_source import correlate_sources
@@ -25,7 +26,7 @@ from analysis.threads import build_threads
 from analysis.timeline import build_significant_events, build_timeline
 from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, process_snapshot
 from backend import plan_runner
-from backend.casework import Casework
+from backend.casework import Casework, local_actor
 from backend.fleet import Fleet
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
@@ -567,6 +568,15 @@ class Workstation:
         artifacts = [dict(row["payload"]) if isinstance(row["payload"], dict) else {}
                      for row in self.related(case_id, "artifact_observations")]
         findings = self.related(case_id, "findings")
+        # The evidence each finding cites, joined back on: a finding that cannot
+        # name its evidence is the one thing this report must never contain, and
+        # the rows are stored separately.
+        citations = {}
+        for row in self.related(case_id, "finding_evidence"):
+            citations.setdefault(row["finding_id"], []).append(
+                {"kind": row["kind"], "id": row["reference"], "detail": row.get("detail")})
+        for finding in findings:
+            finding["evidence_references"] = citations.get(finding["id"], [])
         limitations = self.related(case_id, "collection_limitations")
         timeline = self.related(case_id, "timeline_events")
         sources = execution.get("sources", []) or []
@@ -584,6 +594,11 @@ class Workstation:
         for record in artifacts:
             record.setdefault("recognition", None)
         recognition = self._recognition_summary(case_id)
+        # The program-selected sources, so a brief can cite a browser download
+        # or a socket record rather than inferring one from timing.
+        supplementary = {action: self._evidence_payload(case_id, action)
+                         for action in plan_runner.selectable_sources()}
+        supplementary = {action: payload for action, payload in supplementary.items() if payload}
         activity = build_activity(events, artifacts=artifacts)
         counts = activity["counts_by_kind"]
         threads = build_threads(activity["groups"])
@@ -598,6 +613,7 @@ class Workstation:
                                          limitations, available, sources, counts, activity),
                 "collection_window": execution.get("window"),
                 "recognition": recognition,
+                "supplementary": supplementary,
                 # Separately named totals. One blurred "events" number invited
                 # the reader to treat typed commands as confirmed execution.
                 "record_counts": {
@@ -803,6 +819,59 @@ class Workstation:
                 f"{missing} artifacts named by execution evidence were absent at collection time; their "
                 "contents could not be examined.")
         return limitations
+
+    # --- review briefs and the routine report --------------------------------
+    def _latest_report(self, case_id):
+        """The stored report for an investigation, or a freshly assembled one.
+
+        A brief reads stored evidence rather than re-running collection. When a
+        collection has finished its report is on record; when it has not, the
+        payload is assembled from the same stored rows.
+        """
+        reports = self.related(case_id, "reports")
+        if reports and isinstance(reports[-1].get("payload"), dict):
+            return reports[-1]["payload"]
+        return self.report_payload(case_id)
+
+    def brief(self, case_id, *, subject_type, subject_id, persist=True):
+        """Generate a review brief for one subject and record that it was made."""
+        report = self._latest_report(case_id)
+        try:
+            payload = build_brief(report, subject_type=subject_type, subject_id=subject_id)
+        except BriefError as error:
+            raise ServiceError(str(error), "not_found", 404) from error
+        if not persist:
+            return payload
+
+        brief_id = f"BRIEF-{identifier()[:8].upper()}"
+        payload["brief_id"] = brief_id
+        with self.store.transaction() as db:
+            db.execute(
+                "INSERT INTO review_briefs (id,investigation_id,case_id,subject_type,subject_id,"
+                " created_at,author,payload,evidence_ids,versions) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (brief_id, case_id, payload.get("case_id"), payload["subject"]["type"],
+                 payload["subject"]["id"], now(), local_actor(), encode(payload),
+                 encode(payload["evidence_ids"]), encode(versions())))
+            self.casework.audit("brief.generated", object_type=payload["subject"]["type"],
+                                object_id=payload["subject"]["id"], investigation_id=case_id,
+                                case_id=payload.get("case_id"),
+                                detail={"brief_id": brief_id,
+                                        "evidence_count": len(payload["evidence_ids"])}, db=db)
+        return payload
+
+    def briefs(self, case_id, limit=200):
+        rows = self.store.rows(
+            "SELECT * FROM review_briefs WHERE investigation_id=? ORDER BY created_at DESC LIMIT ?",
+            (case_id, int(limit)))
+        for row in rows:
+            for key in ("payload", "evidence_ids", "versions"):
+                row[key] = json.loads(row[key]) if row[key] else None
+        return rows
+
+    def routine_activity(self, case_id):
+        """The grouped routine/recognized activity, for the separate report."""
+        report = self._latest_report(case_id)
+        return report, build_routine(report.get("activity") or {})
 
     def get_report(self, report_id):
         rows = self.store.rows("SELECT payload FROM reports WHERE id=?", (report_id,))
