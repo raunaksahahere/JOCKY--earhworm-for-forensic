@@ -44,12 +44,30 @@ def smoke(command, workspace):
         source = workspace / 'Unicode नमस्ते space.txt'
         source.write_text('Forensic test fixture Ω', encoding='utf-8')
         case = request(session, '/api/v1/investigations', {'title':'Smoke investigation नमस्ते', 'examiner':'Integration test'})
-        request(session, f"/api/v1/investigations/{case['id']}/collect", {'paths':[str(source)]})
-        for _ in range(100):
+        # Program-selected sources as well as the baseline: each of these reads
+        # data the frozen bundle has to carry, and a missing data file makes the
+        # module fail to import rather than degrade. That is how the packaged
+        # engine was found to be shipping without the investigation grammar and
+        # the driver reference.
+        request(session, f"/api/v1/investigations/{case['id']}/collect",
+                {'paths':[str(source)], 'sources':['NETWORK','USB','DRIVERS','SERVICES']})
+        deadline = time.monotonic() + 600
+        while time.monotonic() < deadline:
             case = request(session, '/api/v1/investigations/'+case['id'])
             if case['status'] in ('completed','partially_completed','failed'): break
-            time.sleep(.1)
-        assert case['status'] in ('completed','partially_completed'), case
+            time.sleep(.5)
+        assert case['status'] in ('completed','partially_completed'), (
+            f"collection did not finish: status {case['status']}")
+        # Every selected source must have produced an evidence record, whether
+        # it succeeded or not. A source that simply vanishes is the failure this
+        # checks for.
+        evidence = {row['type'] for row in request(
+            session, f"/api/v1/investigations/{case['id']}/evidence")['items']}
+        missing = {'NETWORK','USB','DRIVERS','SERVICES'} - evidence
+        assert not missing, f"selected sources produced no evidence record: {sorted(missing)}"
+        # The investigation program is what makes the run reproducible.
+        programs = request(session, f"/api/v1/investigations/{case['id']}/program")['items']
+        assert programs and programs[0]['plan']['platform'] == 'linux', programs
         # Historical execution evidence, artifacts, findings and the merged
         # timeline must be produced by the frozen engine, not only by source.
         history = request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']

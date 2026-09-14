@@ -124,7 +124,7 @@ cheap already exists.
 
 | | |
 |--|--|
-| Application | 0.6.1 |
+| Application | 0.7.0 |
 | API | 1 |
 | Report schema | 5 |
 | Database schema | 6 |

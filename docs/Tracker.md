@@ -1,6 +1,6 @@
 # Tracker
 
-State of the work as of application version 0.6.1, database schema 6.
+State of the work as of application version 0.7.0, database schema 6.
 
 ## Done
 

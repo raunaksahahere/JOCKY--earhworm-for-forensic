@@ -2,6 +2,106 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.7.0 — 2026-09-14
+
+JOCKY could read a machine. It could not say what it had been asked to read,
+collect from anywhere but the machine it ran on, or keep a record of what it had
+been given to work with.
+
+### Added
+
+- **The JOCKY investigation language.** A program says what an investigation
+  needs — a case, targets, a window, sources to collect, filters, correlations,
+  a timeline, a report — and compiles through an AST to a versioned
+  platform-neutral IR and then to one platform's execution plan. A plan names
+  collectors this build implements and bounded options. It never carries a
+  command to run, and the collector path it names is *checked against* a fixed
+  registry rather than imported from it, so a program cannot load code JOCKY did
+  not choose to expose.
+- **Six collectors.** Network configuration and the socket table; browser
+  history and downloads; removable media identity, attach events and mounts;
+  loaded drivers checked against a 687-entry known-abused reference; read-only
+  analysis of a memory image you supply; service units and scheduled jobs. Each
+  runs as its own evidence step, so one unavailable source is a named gap in the
+  report rather than a failed collection, and each declares what it does *not*
+  do — no packet capture, no media contents, no browser secrets, no driver
+  loaded or modified, nothing written to memory.
+- **Cases, evidence sources and an audit trail.** An evidence source is hashed
+  in place and never overwritten: registering the same bytes again records a
+  further acquisition naming what it supersedes, and a digest that no longer
+  matches is reported as a mismatch rather than quietly corrected. The audit
+  trail records what JOCKY and the investigator did, in its own tables, because
+  an interpretation that ends up looking like an observation is worse than no
+  interpretation.
+- **Authorized multi-endpoint collection.** An operator issues a single-use,
+  expiring token naming one machine and the authority for collecting from it;
+  the endpoint redeems it for a credential the server keeps only as a salted
+  digest. An endpoint receives a source name and bounded options — never a
+  command — and looks that source up in its own registry, so someone who took
+  over the control plane would gain the ability to request forensic collection,
+  not the ability to run programs. Failed tasks retry with backoff and are then
+  abandoned with their last error kept, because a collection gap belongs in the
+  record.
+- **Cross-host correlation.** The same file hash, remote address, driver,
+  download or removable device on more than one endpoint. Drivers present on
+  every reporting host are counted and dropped rather than listed: a fleet-wide
+  module is the standard build, and listing all of them would bury the handful
+  of observables some hosts have and others do not.
+- **Cross-source correlation on one host.** A download and the execution of the
+  file it produced; activity on a removable device while it was attached, with
+  files that share a hash with files already on the machine. Both stated as an
+  ordering of observations — downloading a file and running it is ordinary — and
+  never as a claim about intent.
+- **Explainable detections.** Six named rules, each cited by the findings it
+  produces. A driver matching the known-abused reference is reported as
+  *present*, never as abused here; several entries in that reference are
+  legitimate signed vendor drivers. A memory finding from a fixture is
+  classified `INFERRED` so it cannot be read as evidence about a host.
+- **Reproducibility.** The program, IR, plan, platform and every component
+  version are stored for each collection. Selecting sources in the client is
+  compiled into a program first, so a collection driven from the UI is as
+  reproducible as one driven from the language.
+- **The Case File screen**: cases, evidence sources, authorized endpoints and
+  the audit trail, each panel stating its own boundary where an investigator
+  will read it.
+- **Six deterministic synthetic scenarios** and a **thirteen-step end-to-end
+  demo** that runs from a clean checkout in about a minute.
+- **The documentation set**: architecture, investigation language, evidence
+  model, security boundaries, endpoint protocol, app flow, demo, testing, rules,
+  tech stack, reference material, tracker, and a requirement matrix carrying an
+  honest status for every requirement.
+
+### Fixed
+
+- Driver detections read a verdict key of `result` while the collector writes
+  `risk_status`, so a loaded driver matching the known-abused reference produced
+  no finding at all. The same key was wrong in the cross-host comparison.
+- Memory detections read the analysis tool's raw column names rather than the
+  normalized ones, so no memory finding could fire on a real image either.
+- Memory normalization did not recognise `ImageFileName`, the column
+  Volatility3's `windows.pslist` actually emits, so every process from a Windows
+  image normalized to a nameless record. A parent pid of zero was also being
+  turned into `None`, losing every kernel root.
+- An enrolled endpoint could not collect the core sources at all: the registry
+  excluded them because the local collector owns them, which left a remote
+  endpoint able to gather browser history but not processes or execution
+  history.
+- The endpoint agent claimed one batch of four tasks and stopped, leaving two of
+  a six-task collection until the next poll.
+- Cross-host correlation paired USB root hubs by their PCI address and unrelated
+  downloads by bare filename.
+- The Linux adapter offered a `LOGS` source with no collector behind it, so a
+  program asking for it produced a ready task that was skipped without a word.
+
+### Known limitations
+
+- **Windows has not been validated.** The Windows collectors and packaging exist
+  and are fixture-tested; no Windows host has run any of it.
+- **No real memory image has been analysed.** The Volatility3 path is exercised
+  only against fixtures.
+- **Cross-host correlation has only been run degenerately** — two agents on one
+  machine, where every observable is trivially shared.
+
 ## 0.6.1 — 2026-09-14
 
 A 24-hour collection produced a 60-page report. The evidence was right;
