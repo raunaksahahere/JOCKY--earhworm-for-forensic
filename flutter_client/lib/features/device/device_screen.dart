@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/theme/tokens.dart';
 import '../../state/providers.dart';
 
 /// Views display backend observations verbatim; no forensic decisions in Dart.
@@ -26,6 +27,32 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   final _windowHours = TextEditingController(text: '168');
   final _activitySearch = TextEditingController();
   String _triageFilter = 'all';
+  // How a record is presented, which is a different question from what the
+  // evidence supports. An investigator wanting to skip the accounted-for
+  // majority filters on this, and the triage category behind each record is
+  // untouched by it.
+  String _presentationFilter = 'all';
+  static const _presentationLabels = {
+    'ROUTINE_RECOGNIZED': 'Routine / recognized',
+    'FOR_REVIEW': 'For review',
+    'NEEDS_ATTENTION': 'Needs attention',
+  };
+
+  /// The presentation of one stored row.
+  ///
+  /// The engine decides this during analysis and stores the triage it informed;
+  /// the client derives the bucket from what was stored rather than asking for
+  /// a second opinion it would have to keep in step.
+  String _presentationOf(dynamic row) {
+    if (row['recognized_name'] != null && '${row['triage']}' != 'POTENTIALLY_HARMFUL') {
+      return 'ROUTINE_RECOGNIZED';
+    }
+    return switch ('${row['triage']}') {
+      'POTENTIALLY_HARMFUL' => 'NEEDS_ATTENTION',
+      'NOT_HARMFUL_ON_AVAILABLE_EVIDENCE' => 'ROUTINE_RECOGNIZED',
+      _ => 'FOR_REVIEW',
+    };
+  }
   // Opens on what deserves attention. "All evidence" is one click away and
   // nothing is hidden -- the appendices and the database hold every record.
   String _priorityFilter = 'leads';
@@ -492,10 +519,17 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         return false;
       }
       if (_triageFilter != 'all' && row['triage'] != _triageFilter) return false;
+      if (_presentationFilter != 'all' && _presentationOf(row) != _presentationFilter) {
+        return false;
+      }
       if (needle.isEmpty) return true;
+      // Recognized software is searchable by name even though the name appears
+      // in no command line: "python3-minimal" is what the package manager calls
+      // it, and it is what an investigator will type.
       final haystack = [
         row['full_command_line'], row['normalized_command'], row['executable'],
         row['process_name'], row['source'], row['reference'], row['account'], row['evidence_kind'],
+        row['recognized_name'],
       ].where((value) => value != null).join(' ').toLowerCase();
       return haystack.contains(needle);
     }).toList();
@@ -522,10 +556,13 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     final rows = _filteredActivity;
     final counts = <String, int>{};
     final priorityCounts = <String, int>{};
+    final presentationCounts = <String, int>{};
     for (final row in _executionEvents) {
       counts['${row['triage']}'] = (counts['${row['triage']}'] ?? 0) + 1;
       final priority = '${row['investigator_priority']}';
       priorityCounts[priority] = (priorityCounts[priority] ?? 0) + 1;
+      final presentation = _presentationOf(row);
+      presentationCounts[presentation] = (presentationCounts[presentation] ?? 0) + 1;
     }
     final leadCount =
         (priorityCounts['PRIORITY_1'] ?? 0) + (priorityCounts['PRIORITY_2'] ?? 0);
@@ -571,6 +608,20 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 const DropdownMenuItem(value: 'all', child: Text('All evidence')),
               ],
               onChanged: (value) => setState(() => _priorityFilter = value ?? 'leads'),
+            ),
+            DropdownButton<String>(
+              value: _presentationFilter,
+              items: [
+                const DropdownMenuItem(
+                    value: 'all', child: Text('Any presentation', style: TextStyle(fontSize: 12))),
+                for (final entry in _presentationLabels.entries)
+                  DropdownMenuItem(
+                    value: entry.key,
+                    child: Text('${entry.value} (${presentationCounts[entry.key] ?? 0})',
+                        style: const TextStyle(fontSize: 12)),
+                  ),
+              ],
+              onChanged: (value) => setState(() => _presentationFilter = value ?? 'all'),
             ),
             DropdownButton<String>(
               value: _triageFilter,
@@ -631,6 +682,14 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Text('${row['timestamp'] ?? 'time not recorded by source'}',
               style: const TextStyle(fontSize: 11.5)),
           Text(reference, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+          if (row['recognized_name'] != null)
+            Tooltip(
+              message: 'Accounted for by the machine\'s own records. Recognition says what '
+                  'something is, not that it is safe.',
+              child: Text('RECOGNIZED: ${row['recognized_name']}',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                      color: JockyColors.textMuted)),
+            ),
         ]),
         const SizedBox(height: 4),
         // The command exactly as its source recorded it, never shortened to the
@@ -648,16 +707,83 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
              '  |  command ${row['command_reconstruction_status'] ?? 'NOT_AVAILABLE'}'
              '/${row['command_evidence_strength'] ?? 'n/a'}  |  ${row['source']}',
             style: const TextStyle(fontSize: 11.5)),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
+        Wrap(spacing: 4, children: [
+          TextButton(
             onPressed: () => setState(() => open ? _expanded.remove(reference) : _expanded.add(reference)),
             child: Text(open ? 'Hide details' : 'Details'),
           ),
-        ),
+          TextButton.icon(
+            key: Key('brief-$reference'),
+            onPressed: () => _openBrief('activity', reference),
+            icon: const Icon(Icons.description_outlined, size: 15),
+            label: const Text('Review brief'),
+          ),
+        ]),
         if (open) Padding(padding: const EdgeInsets.only(left: 8, bottom: 8), child: _json(row['payload'])),
       ]),
     );
+  }
+
+  /// Fetch and show a review brief for one subject.
+  ///
+  /// The brief is generated by the engine from stored evidence; the client
+  /// renders it and offers the PDF. Nothing is recomputed here, and nothing is
+  /// collected again.
+  Future<void> _openBrief(String subjectType, String subjectId) async {
+    final caseId = widget.caseId;
+    if (caseId == null) return;
+    setState(() => _notice = null);
+    try {
+      final brief = await ref.read(apiClientProvider).jsonRequest(
+        '/api/v1/investigations/$caseId/briefs',
+        body: {'subject_type': subjectType, 'subject_id': subjectId});
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => _BriefDialog(
+          brief: brief,
+          onExport: () => _exportBrief(subjectType, subjectId),
+        ),
+      );
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  Future<void> _exportBrief(String subjectType, String subjectId) async {
+    final caseId = widget.caseId;
+    if (caseId == null) return;
+    final path = await ref.read(fileSelectionProvider).pickSaveLocation(
+      suggestedName: 'JOCKY_ReviewBrief_$subjectId.pdf', extension: 'pdf');
+    if (path == null) return;
+    try {
+      final response = await ref.read(apiClientProvider).request(
+        '/api/v1/investigations/$caseId/briefs/export',
+        body: {'subject_type': subjectType, 'subject_id': subjectId});
+      await File(path).writeAsBytes(response.bodyBytes);
+      if (mounted) setState(() => _notice = 'Review brief written to $path');
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
+  }
+
+  Future<void> _exportRoutine({bool detailed = false}) async {
+    final caseId = widget.caseId;
+    if (caseId == null) return;
+    final path = await ref.read(fileSelectionProvider).pickSaveLocation(
+      suggestedName: 'jocky-routine-$caseId.pdf', extension: 'pdf');
+    if (path == null) return;
+    try {
+      final response = await ref.read(apiClientProvider).request(
+        '/api/v1/investigations/$caseId/routine/export', body: {'detailed': detailed});
+      await File(path).writeAsBytes(response.bodyBytes);
+      if (mounted) {
+        setState(() => _notice = 'Routine activity report written to $path. It describes activity '
+            'that raised no concern signal; it is not a guarantee of safety.');
+      }
+    } on Object catch (error) {
+      if (mounted) setState(() => _error = '$error');
+    }
   }
 
   Widget _json(Object? value) => SelectableText(const JsonEncoder.withIndent('  ').convert(value), style: const TextStyle(fontFamily: 'monospace', fontSize: 12));
@@ -715,6 +841,17 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Chip(label: Text('Stage: ${_case?['status'] ?? 'preparing'}')),
           if (_reports.isNotEmpty) FilledButton.icon(key: const Key('export-investigation-pdf'), onPressed: _busy ? null : () => _export('pdf'), icon: const Icon(Icons.picture_as_pdf), label: const Text('Export PDF')),
           if (_reports.isNotEmpty) OutlinedButton(onPressed: _busy ? null : () => _export('json'), child: const Text('Export JSON')),
+          // Deliberately a separate document. The investigator report stays
+          // about what needs attention; everything the machine accounted for
+          // goes here, grouped, so it can be put on the record without being
+          // read line by line.
+          if (_reports.isNotEmpty)
+            OutlinedButton.icon(
+              key: const Key('export-routine-pdf'),
+              onPressed: _busy ? null : () => _exportRoutine(),
+              icon: const Icon(Icons.inventory_2_outlined, size: 16),
+              label: const Text('Routine activity PDF'),
+            ),
           if (_case != null && !terminal.contains(_case!['status']) && _case!['status'] != 'created') OutlinedButton(onPressed: () async { await ref.read(apiClientProvider).jsonRequest('/api/v1/investigations/${widget.caseId}/cancel', body: {}); if (mounted) setState(() => _notice = 'Cancellation requested; the current bounded step may finish first.'); }, child: const Text('Cancel collection')),
           TextButton(onPressed: () => context.go('/device'), child: const Text('All investigations')),
         ]),
@@ -745,5 +882,97 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         _section('Reports', _reports),
       ],
     ]);
+  }
+}
+
+
+/// A review brief, rendered as the investigator reads it.
+///
+/// Deliberately the same sections in the same order as the PDF: someone who
+/// reads one on screen and hands the other to a colleague should be looking at
+/// the same document.
+class _BriefDialog extends StatelessWidget {
+  const _BriefDialog({required this.brief, required this.onExport});
+
+  final Map<String, dynamic> brief;
+  final VoidCallback onExport;
+
+  @override
+  Widget build(BuildContext context) {
+    final subject = brief['subject'] as Map<String, dynamic>? ?? const {};
+    final execution = brief['execution'] as Map<String, dynamic>? ?? const {};
+    final recognition = brief['recognition'] as Map<String, dynamic>? ?? const {};
+    final sections = (brief['sections'] as List? ?? const []).whereType<Map>();
+
+    Widget heading(String text) => Padding(
+          padding: const EdgeInsets.only(top: 14, bottom: 4),
+          child: Text(text, style: const TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w700, color: JockyColors.accent)),
+        );
+    Widget line(String text, {bool mono = false}) => Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: SelectableText(text, style: TextStyle(
+              fontSize: mono ? 11.5 : 12.5,
+              fontFamily: mono ? 'monospace' : null)),
+        );
+
+    return AlertDialog(
+      key: const Key('review-brief'),
+      title: Text('Review brief — ${subject['id']}'),
+      content: SizedBox(
+        width: 720,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              line('${subject['label'] ?? subject['id']}', mono: true),
+              heading('Status'),
+              line('Classification: ${brief['classification'] ?? 'not classified'}'),
+              if (brief['presentation'] != null) line('Presentation: ${brief['presentation']}'),
+              line('Priority: ${brief['priority'] ?? 'not ranked'}'),
+              line('Execution: ${execution['state']} — ${execution['detail']}'),
+              line('Recognition: ${recognition['state']} — ${recognition['detail']}'),
+              heading('Summary'),
+              line('${brief['summary'] ?? ''}'),
+              heading('Why this was surfaced'),
+              line('${brief['why_surfaced'] ?? 'Not stated.'}'),
+              for (final section in sections) ...[
+                heading('${section['title']}'),
+                for (final entry in (section['body'] as List? ?? const []).take(12))
+                  line('$entry', mono: true),
+              ],
+              heading('What is known'),
+              for (final entry in brief['known'] as List? ?? const []) line('— $entry'),
+              heading('What is unknown'),
+              for (final entry in brief['unknown'] as List? ?? const []) line('— $entry'),
+              if ((brief['collection_limitations'] as List? ?? const []).isNotEmpty) ...[
+                heading('Collection limitations'),
+                for (final entry in brief['collection_limitations'] as List) line('— $entry'),
+              ],
+              heading('Suggested investigator review'),
+              for (final entry in brief['suggested_review'] as List? ?? const []) line('— $entry'),
+              heading('Evidence cited'),
+              line((brief['evidence_ids'] as List? ?? const []).join(', '), mono: true),
+              const SizedBox(height: 14),
+              SelectableText('${brief['disclaimer'] ?? ''}',
+                  style: const TextStyle(fontSize: 11.5, color: JockyColors.textMuted)),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Close')),
+        FilledButton.icon(
+          key: const Key('export-brief'),
+          onPressed: () {
+            Navigator.of(context).pop();
+            onExport();
+          },
+          icon: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+          label: const Text('Export PDF'),
+        ),
+      ],
+    );
   }
 }
