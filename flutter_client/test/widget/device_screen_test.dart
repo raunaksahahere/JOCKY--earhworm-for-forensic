@@ -3,11 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jocky_client/features/device/device_screen.dart';
 
 import '../support/fake_transport.dart';
+import '../support/fixtures.dart';
 import '../support/harness.dart';
 
 /// The investigation workspace must report exactly what the engine recorded:
 /// how much historical evidence there is, and what could not be collected.
 void main() {
+  group('source selection', _sourceSelection);
+
   late FakeTransport transport;
 
   const caseId = 'case-1';
@@ -420,5 +423,77 @@ void main() {
       expect(find.textContaining('appear related'), findsWidgets);
       expect(find.textContaining('does not state what anyone intended'), findsOneWidget);
     });
+  });
+}
+
+/// Choosing which sources a collection reads.
+///
+/// The source list comes from the engine so the client can never offer a
+/// collector the engine does not have, nor hide one it gained.
+void _sourceSelection() {
+  late FakeTransport transport;
+
+  setUp(() {
+    transport = FakeTransport();
+    transport.respondJson('/health', loadFixture('health'));
+    transport.respondJson('/api/v1/investigations', {'items': const []});
+    transport.respondJson('/api/v1/collection-sources', {
+      'baseline': const ['SYSTEM', 'PROCESSES', 'EXECUTION', 'FILES'],
+      'selectable': const [
+        {'source': 'NETWORK', 'description': 'sockets', 'needs_argument': false},
+        {'source': 'BROWSER', 'description': 'history', 'needs_argument': false},
+        {'source': 'MEMORY', 'description': 'memory image', 'needs_argument': true},
+      ],
+    });
+  });
+
+  Future<void> pump(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1500, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(harness(const DeviceScreen(), transport: transport));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('the engine decides which sources are offered', (tester) async {
+    await pump(tester);
+    expect(find.byKey(const Key('source-NETWORK')), findsOneWidget);
+    expect(find.byKey(const Key('source-BROWSER')), findsOneWidget);
+    expect(find.byKey(const Key('source-MEMORY')), findsOneWidget);
+  });
+
+  testWidgets('an unavailable source is described as a gap, not a failure', (tester) async {
+    await pump(tester);
+    expect(
+      find.textContaining('becomes a named gap in the report, not a failed collection'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('selecting memory asks for the image and says JOCKY does not acquire it',
+      (tester) async {
+    await pump(tester);
+    expect(find.byKey(const Key('memory-image-path')), findsNothing);
+    await tester.tap(find.byKey(const Key('source-MEMORY')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('memory-image-path')), findsOneWidget);
+    expect(find.textContaining('It does not acquire memory'), findsOneWidget);
+  });
+
+  testWidgets('the chosen sources are sent with the collection request', (tester) async {
+    transport.respondJson('/api/v1/investigations', {'id': 'new-case', 'status': 'created'});
+    await pump(tester);
+    await tester.enterText(find.byType(TextField).first, 'Source selection');
+    await tester.tap(find.byKey(const Key('source-NETWORK')));
+    await tester.pumpAndSettle();
+    transport.respondJson('/api/v1/investigations/new-case/collect', {'status': 'collecting'});
+    await tester.tap(find.byKey(const Key('analyze-device')));
+    await tester.pumpAndSettle();
+
+    final collect = transport.requests
+        .where((request) => request.uri.path.endsWith('/collect'))
+        .toList();
+    expect(collect, isNotEmpty);
+    expect('${collect.last.body}', contains('NETWORK'));
   });
 }

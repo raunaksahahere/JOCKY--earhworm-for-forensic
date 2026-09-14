@@ -5,8 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/config/app_config.dart';
 import '../core/errors/failure.dart';
 import '../core/networking/http_transport.dart';
+import '../models/casework/casework_models.dart';
 import '../models/settings/workstation_settings.dart';
 import '../repositories/backend_repository.dart';
+import '../repositories/casework_repository.dart';
 import '../repositories/command_repository.dart';
 import '../repositories/records_repository.dart';
 import '../services/api/jocky_api_client.dart';
@@ -95,6 +97,26 @@ final commandRepositoryProvider =
 
 final recordsRepositoryProvider =
     Provider<RecordsRepository>((ref) => RecordsRepository(ref.watch(recordStoreProvider)));
+
+final caseworkRepositoryProvider =
+    Provider<CaseworkRepository>((ref) => CaseworkRepository(ref.watch(apiClientProvider)));
+
+/// The case file's four listings. Each is a separate future so one that fails
+/// — an engine that is still starting, say — does not blank the others.
+final casesProvider = FutureProvider.autoDispose(
+    (ref) => ref.watch(caseworkRepositoryProvider).cases());
+
+final evidenceSourcesProvider = FutureProvider.autoDispose.family<List<EvidenceSource>, String?>(
+    (ref, caseId) => ref.watch(caseworkRepositoryProvider).evidenceSources(caseId: caseId));
+
+final endpointsProvider = FutureProvider.autoDispose(
+    (ref) => ref.watch(caseworkRepositoryProvider).endpoints());
+
+final auditTrailProvider = FutureProvider.autoDispose.family<List<AuditEntry>, String?>(
+    (ref, caseId) => ref.watch(caseworkRepositoryProvider).auditTrail(caseId: caseId));
+
+final collectionSourcesProvider = FutureProvider.autoDispose(
+    (ref) => ref.watch(caseworkRepositoryProvider).collectionSources());
 
 /// Backend-owned command syntax. Kept as a future so the Command Center can
 /// show a reference-unavailable state without blocking command submission.

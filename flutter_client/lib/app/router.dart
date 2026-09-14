@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../core/theme/tokens.dart';
 
+import '../features/casefile/case_file_screen.dart';
 import '../features/command_center/command_center_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/investigations/investigation_detail_screen.dart';
@@ -52,6 +53,15 @@ GoRouter buildRouter({String initialLocation = '/'}) {
                 ),
               ),
             ],
+          ),
+          GoRoute(
+            path: JockyDestination.caseFile.path,
+            pageBuilder: (context, state) => _page(
+              state,
+              CaseFileScreen(
+                initialTab: int.tryParse(state.uri.queryParameters['tab'] ?? '') ?? 0,
+              ),
+            ),
           ),
           GoRoute(
             path: JockyDestination.reports.path,

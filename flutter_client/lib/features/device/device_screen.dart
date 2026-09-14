@@ -31,6 +31,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   String _priorityFilter = 'leads';
   final Set<String> _expanded = {};
   final List<String> _paths = [];
+  // Sources beyond the baseline. The baseline -- system, processes, execution
+  // history and the files those name -- always runs, because the report is
+  // built from it. These are the ones the investigator chooses.
+  final Set<String> _sources = {};
+  final _memoryImage = TextEditingController();
   String? _error, _notice;
   String _statusFilter = 'all';
   bool _busy = false;
@@ -54,6 +59,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     _examiner.dispose();
     _search.dispose();
     _windowHours.dispose();
+    _memoryImage.dispose();
     _activitySearch.dispose();
     super.dispose();
   }
@@ -96,6 +102,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         'paths': _paths,
         'window_hours': double.tryParse(_windowHours.text.trim()) ?? 168,
         'include_command_lines': _includeCommandLines,
+        'sources': _sources.toList(),
+        if (_sources.contains('MEMORY')) 'memory_image': _memoryImage.text.trim(),
       });
       await ref.read(recordsControllerProvider.notifier).refresh();
       if (mounted) context.go('/device/$id');
@@ -318,6 +326,65 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           Expanded(child: SelectableText(value, style: TextStyle(fontSize: 12.5, color: color))),
         ]),
       );
+
+  /// Sources the investigator may add to this collection.
+  ///
+  /// The engine is asked what it can collect rather than the client listing
+  /// sources itself: a client that hardcodes the list offers collectors the
+  /// engine does not have, and hides ones it gained.
+  Widget _additionalSources() {
+    final available = ref.watch(collectionSourcesProvider);
+    return available.when(
+      loading: () => const SizedBox.shrink(),
+      error: (_, _) => const SizedBox.shrink(),
+      data: (sources) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Additional evidence sources', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          const Text(
+            'Each runs as its own step. A source that is unavailable on this machine becomes '
+            'a named gap in the report, not a failed collection.',
+            style: TextStyle(fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final source in sources)
+                FilterChip(
+                  key: Key('source-${source.source}'),
+                  label: Text(source.source),
+                  tooltip: source.description,
+                  selected: _sources.contains(source.source),
+                  onSelected: (selected) => setState(() {
+                    if (selected) {
+                      _sources.add(source.source);
+                    } else {
+                      _sources.remove(source.source);
+                    }
+                  }),
+                ),
+            ],
+          ),
+          if (_sources.contains('MEMORY')) ...[
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('memory-image-path'),
+              controller: _memoryImage,
+              onChanged: (_) => setState(() {}),
+              decoration: const InputDecoration(
+                labelText: 'Memory image to analyse (absolute path)',
+                helperText: 'JOCKY analyses an image you supply. It does not acquire memory, '
+                    'and it never writes to the image or executes anything from it.',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget _collectionSummary() {
     if (_reports.isEmpty) {
@@ -628,6 +695,9 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           title: const Text('Collect command-line arguments'),
           subtitle: const Text('Off by default. Command lines frequently contain passwords and tokens. When enabled, values matching common credential patterns are masked before storage — a mitigation, not a guarantee.'),
         ),
+        const SizedBox(height: 16),
+        _additionalSources(),
+        const SizedBox(height: 8),
         Wrap(spacing: 12, children: [
           TextButton.icon(onPressed: _paths.length >= 20 ? null : () async { final path = await ref.read(fileSelectionProvider).pickFile(); if (path != null && mounted) setState(() => _paths.add(path)); }, icon: const Icon(Icons.attach_file), label: const Text('Add file')),
           TextButton.icon(onPressed: _paths.length >= 20 ? null : () async { final path = await ref.read(fileSelectionProvider).pickDirectory(); if (path != null && mounted) setState(() => _paths.add(path)); }, icon: const Icon(Icons.folder_open), label: const Text('Add directory')),
