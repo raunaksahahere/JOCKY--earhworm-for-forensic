@@ -1,18 +1,60 @@
 # JOCKY — Portable defensive forensic workstation
 
-JOCKY runs on an **authorized investigation machine**, collects supported local
-observations, and stores investigations in SQLite for offline review and PDF/JSON
-export. Flutter is the desktop presentation; Python owns all forensic logic.
+JOCKY runs on an **authorized investigation machine**. It collects documented
+operating-system telemetry and artefacts, normalizes them into one evidence
+vocabulary, correlates across sources and across hosts, ranks what deserves
+attention, and produces a report that states its own limits as plainly as its
+findings. Flutter is the desktop presentation; Python owns all forensic logic.
 
-Choose **Analyze This Device** from Overview. Add file/directory sources explicitly
-if needed, then run collection. Stages and collection limitations are displayed.
-Open Previous investigations to review saved device/process/file observations,
-findings, evidence references and reports. Export PDF without rerunning the engine.
+Choose **Analyze This Device** from Overview. Add file or directory sources
+explicitly if needed, pick any additional evidence sources, then run collection.
+Each source is its own step, so one that is unavailable becomes a named gap in
+the report rather than a failed collection. Open **Case File** for cases,
+registered evidence sources, authorized endpoints and the audit trail.
 
-Current process snapshots are not historical execution timelines. No historical
-OS execution-log collector is included. Filename indicators are review prompts,
-not malware verdicts. Hashes compare bytes; they do not establish authenticity.
-JOCKY implements no bypass, injection, stealth, persistence or exploit features.
+### What it will not do
+
+A process snapshot is not a historical timeline. A shell history line is not
+proof a command ran. A filename indicator is a reason to look, not a verdict. A
+hash compares bytes; it does not establish authenticity. A driver matching the
+known-abused reference is present on this machine, which is not evidence it was
+abused here.
+
+JOCKY implements no bypass, injection, stealth, persistence or exploit feature.
+It does not capture packets, read browser secrets, acquire memory, load or
+modify drivers, or expose a remote shell. An enrolled endpoint receives a
+forensic collection request naming a source — never a command. See
+[docs/SecurityBoundaries.md](docs/SecurityBoundaries.md).
+
+**Windows is not validated.** The Windows collectors and packaging exist and are
+fixture-tested; no Windows host has run any of it.
+
+## Try it
+
+```sh
+cd application
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/demo.py --output demo-output
+```
+
+Thirteen steps from a case to a finished evidence package, on this machine, in
+about a minute. See [docs/Demo.md](docs/Demo.md).
+
+## Documentation
+
+| | |
+|--|--|
+| [Architecture](docs/Architecture.md) | Layering, the compilation chain, storage, the path off SQLite |
+| [Investigation language](docs/InvestigationLanguage.md) | Grammar, statements, compilation |
+| [Evidence model](docs/EvidenceModel.md) | The vocabulary for what is known and what is not |
+| [Security boundaries](docs/SecurityBoundaries.md) | What is absent, and where each boundary is enforced |
+| [Endpoint protocol](docs/EndpointProtocol.md) | How an authorized machine is collected from |
+| [App flow](docs/AppFlow.md) | Opening the app to holding a report |
+| [Demo](docs/Demo.md) | The reproducible end-to-end run |
+| [Requirement matrix](docs/RequirementMatrix.md) | Every requirement, what implements it, how far it is validated |
+| [Testing](docs/Testing.md) | The suites and what they guard |
+| [Rules](docs/Rules.md) | The constraints this is built under |
+| [Tracker](docs/Tracker.md) | What is done, what is open, what broke |
 
 ## Product source
 
@@ -20,7 +62,9 @@ JOCKY implements no bypass, injection, stealth, persistence or exploit features.
 backend/             SQLite, application service, collectors, authenticated API/runtime, PDF
 flutter_client/      Windows/Linux Flutter app, client services and widget/integration tests
 analysis/            Existing read-only forensic analysis modules
-compiler/            Existing Lark parser and command contract v1
+compiler/            Command parser, investigation language, IR and execution plans
+endpoint/            The agent that collects on another authorized machine
+scenarios/           Deterministic synthetic lab scenarios, labelled throughout
 communication/       Existing dispatcher and development compatibility API
 crypto/              Non-destructive authenticated evidence export
 reports/             Command report schema v1
@@ -34,7 +78,7 @@ desktop-app/         Retained legacy Electron reference; not a runtime dependenc
 desktop/             Retained legacy packaging reference; not the production entry
 agent/, sha256/      Retained native prototype/vendor code; not shipped or required
 reference-repo/      Ignored reference material
-docs/                Ignored working documents
+docs/                Architecture, evidence model, security boundaries, requirement matrix
 ```
 
 The product repository root is this directory (the local checkout is named
