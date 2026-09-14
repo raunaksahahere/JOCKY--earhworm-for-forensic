@@ -147,7 +147,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.7.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
+`build/deb/jocky_0.8.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.

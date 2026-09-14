@@ -27,7 +27,12 @@ def request(session, path, body=None):
         headers={'Authorization': 'Bearer '+session['token'], 'X-Jocky-Instance': session['instance_id'], 'Content-Type':'application/json'})
     with urllib.request.urlopen(req, timeout=60) as response:
         payload = response.read()
-        return payload if response.headers['Content-Type'].startswith('application/pdf') else json.loads(payload)
+        # Binary responses come back as bytes; everything else is JSON. Keyed on
+        # the declared type rather than on trying to decode and hoping.
+        content_type = response.headers['Content-Type'] or ''
+        binary = content_type.startswith(('application/pdf', 'application/zip',
+                                          'application/octet-stream'))
+        return payload if binary else json.loads(payload)
 
 
 def stop(process, session):
@@ -132,12 +137,84 @@ def smoke(command, workspace):
         pdf = request(session, '/api/v1/investigations/'+case['id']+'/report/export', {'format':'pdf'})
         assert pdf.startswith(b'%PDF-')
         (workspace / 'smoke-report.pdf').write_bytes(pdf)
+
+        # --- what an investigator actually does with a finished collection ---
+        # Recognition must have run and been stored, not recomputed on demand.
+        recognition = stored['recognition']
+        assert recognition['artifacts_recognized'] > 0, (
+            'the packaged engine recognized nothing; check the reference data is bundled')
+        assert 'not a statement that the file is safe' in recognition['note']
+
+        # A review brief for the highest-priority thing in the collection.
+        subject = (stored['leads'][0]['evidence_references'][0] if stored['leads']
+                   else history[0]['reference'])
+        brief = request(session, f"/api/v1/investigations/{case['id']}/briefs",
+                        {'subject_type': 'activity', 'subject_id': subject})
+        assert brief['evidence_ids'], 'a brief must cite the evidence it rests on'
+        assert brief['unknown'], 'a brief must state what it does not know'
+        assert 'not a malware verdict' in brief['disclaimer']
+        brief_pdf = request(session, f"/api/v1/investigations/{case['id']}/briefs/export",
+                            {'subject_type': 'activity', 'subject_id': subject})
+        assert brief_pdf.startswith(b'%PDF-')
+        (workspace / 'smoke-brief.pdf').write_bytes(brief_pdf)
+
+        # An artifact brief, which is the other half of the workload question.
+        artifact_brief = request(session, f"/api/v1/investigations/{case['id']}/briefs",
+                                 {'subject_type': 'artifact',
+                                  'subject_id': artifacts[0]['reference']})
+        assert artifact_brief['recognition']['state'] in ('RECOGNIZED', 'UNKNOWN')
+
+        # The routine report must be separate, grouped, and never called safe.
+        routine = request(session, f"/api/v1/investigations/{case['id']}/routine")
+        assert routine['groups'], 'nothing was presented as routine'
+        assert routine['totals']['records'] > routine['group_count'], (
+            'the routine report is not grouping anything')
+        for group in routine['groups']:
+            assert group['evidence_references'], 'a group with no evidence cannot be checked'
+        assert 'not a guarantee' in routine['note']
+        routine_pdf = request(session, f"/api/v1/investigations/{case['id']}/routine/export", {})
+        assert routine_pdf.startswith(b'%PDF-')
+        (workspace / 'smoke-routine.pdf').write_bytes(routine_pdf)
+
+        # Search must reach past the command line.
+        recognized_name = recognition['software'][0]['name']
+        found = request(session,
+                        f"/api/v1/investigations/{case['id']}/search?q={recognized_name}")
+        assert found['total'] > 0, f'search found nothing for {recognized_name}'
+
+        # The generated summary, with the evidence behind each sentence.
+        summary = request(session, f"/api/v1/investigations/{case['id']}/summary")
+        assert summary['statements'], 'no case summary was generated'
+        assert 'not a verdict' in summary['closing']
+        assert request(session, f"/api/v1/investigations/{case['id']}/narrative")['items']
+
+        # The evidence package, and its own manifest.
+        package = request(session, f"/api/v1/investigations/{case['id']}/package", {})
+        (workspace / 'smoke-package.zip').write_bytes(package)
+        import io as _io, json as _json, zipfile as _zipfile
+        with _zipfile.ZipFile(_io.BytesIO(package)) as archive:
+            manifest = _json.loads(archive.read('MANIFEST.json'))
+            names = set(archive.namelist())
+        assert manifest['versions']['application'], 'the package must name the version'
+        assert manifest['files'], 'the manifest lists no files'
+        assert {'report.json', 'README.txt', 'investigator-report.pdf'} <= names
+        import hashlib as _hashlib
+        with _zipfile.ZipFile(_io.BytesIO(package)) as archive:
+            for entry in manifest['files']:
+                digest = _hashlib.sha256(archive.read(entry['name'])).hexdigest()
+                assert digest == entry['sha256'], f"{entry['name']} does not match its digest"
         assert request(session, '/api/v1/history')['items']
         # The analysis must survive the restart, not be rebuilt on demand.
         assert len(request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']) == len(history)
         stop(process, session)
         print(json.dumps({'result':'passed','investigation_id':case['id'],'status':case['status'],
-                          'pdf_bytes':len(pdf),'historical_telemetry':telemetry,
+                          'pdf_bytes':len(pdf),'brief_pdf_bytes':len(brief_pdf),
+                          'routine_pdf_bytes':len(routine_pdf),'package_bytes':len(package),
+                          'package_files':len(manifest['files']),
+                          'recognized_artifacts':recognition['artifacts_recognized'],
+                          'routine_groups':routine['group_count'],
+                          'summary_statements':len(summary['statements']),
+                          'historical_telemetry':telemetry,
                           'execution_events':len(history),'artifacts':len(artifacts),
                           'findings':len(findings),'timeline_entries':len(event_timeline),
                           'record_counts':counts,'triage':triage,'priorities':priorities,

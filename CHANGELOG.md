@@ -2,6 +2,107 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.8.0 — 2026-09-15
+
+A collection produced seven hundred distinct activities and asked an
+investigator to read all of them, because JOCKY had no way of saying that six
+hundred were the operating system doing its job.
+
+### Added
+
+- **Software recognition.** JOCKY now says what a file is, from the machine's
+  own records rather than from its name: the package manager's account of which
+  package owns each path (421,000 paths from 2,784 packages on the development
+  host, nothing hardcoded), snap metadata, and fourteen vendor installation
+  layouts each requiring a marker file inside the installation. A folder called
+  `flutter` is not Flutter; a folder with `bin/cache/flutter.version.json` in it
+  is, and the version comes out of that file. A path in `/usr/bin` that no
+  package claims is reported as being in a place, not as being a thing --
+  that case is one worth telling an investigator about, not quietly resolving.
+  Nothing is executed to learn a version, and a test reads the module's own
+  source and fails if it ever contains an execution path.
+- **A routine / recognized presentation category**, kept apart from the triage
+  category. On the development host this splits 709 activities into 405
+  routine, 299 for review and 5 needing attention, with every triage category
+  unchanged. Recognition is context and cannot cancel a concern signal: a
+  recognized interpreter running from a temporary directory with remote content
+  piped into it still scores potentially harmful. A recognized interpreter whose
+  arguments were never recorded deliberately stays for review, because
+  recognizing `python3` says nothing about the script it was handed.
+- **Review briefs.** One or two pages about one subject -- artifact, finding,
+  activity, lead or thread -- answering what it is, why it was surfaced, whether
+  execution is established, what is known, what is unknown, what is related and
+  what to check next. Every statement must trace to a stored record: a browser
+  link needs a download record naming that exact path, a network link needs a
+  socket record owned by that process, and proximity in a timeline produces
+  neither. Where the evidence does not support a link the brief says so, and
+  says what the absence does not mean -- a socket table cannot show a connection
+  that had already closed. PDF, JSON, and an on-screen dialog with the same
+  sections in the same order.
+- **A separate routine activity report.** The 404 routine activities collapse
+  into nine groups with their evidence identifiers attached. Printing eleven
+  hundred identical version checks is not a record; it is a way of ensuring
+  nobody reads one. Called Routine / Recognized, never Safe, and every copy
+  carries the sentence saying it is not a guarantee.
+- **Real multi-host validation on Linux.** Two containers with genuinely
+  separate filesystems, hostnames and process tables. The validation proves the
+  separation before it asserts anything else, then plants one file on both hosts
+  and one on only one, and checks the shared digest correlates naming both
+  endpoints while the unique one does not correlate at all. It states what it
+  does not establish -- containers share a kernel -- and skips honestly rather
+  than passing where Docker is absent.
+- **A memory workflow**, rather than a collector call: an image is registered as
+  evidence, hashed, and re-verified immediately before analysis. A changed image
+  is refused, because attributing findings to bytes that are no longer there is
+  what this exists to prevent. Results carry the image's digest, the plugin that
+  produced each record, and whether a value was read directly or derived.
+- **Forensic container identification** from the file's own header -- EWF, EWF2,
+  AFF, QCOW, VMDK, VHD, raw -- with the record saying what would be needed to
+  expose the contents. JOCKY does not parse forensic containers; it names,
+  hashes and preserves them.
+- **Investigator search across every stored surface** -- artifacts, hashes,
+  commands, URLs, endpoints, users, threads, leads, findings, recognized names,
+  evidence sources -- with each hit naming the field that matched.
+- **Investigator assessments**, stored beside the machine's classification and
+  never over it, with the machine's conclusion copied in as it stood.
+- **A generated case summary** whose every sentence carries the evidence
+  identifiers behind it and is stored per statement, so the part people actually
+  read can be audited against the records it came from.
+- **A self-describing evidence package**: a manifest naming the case, the
+  investigation, every version, the endpoints, the registered sources with their
+  digests, the collectors and their status, and the SHA-256 of every file as
+  written, with a verifier that re-hashes them.
+- **A checked storage boundary.** The documented path off SQLite rested on a
+  claim that only the storage layer knows it is SQLite. Eleven tests now check
+  it rather than trusting it.
+
+### Fixed
+
+- Investigations never stored their `case_id`. Migration 5 added the column and
+  nothing ever wrote it, so every collection looked unattached however it was
+  created. Found only when the evidence-package manifest had no case to
+  describe.
+- Findings in the report payload carried no evidence references at all: the rows
+  were stored in a separate table and never joined back, so a finding could not
+  cite what it rested on.
+- Memory analysis produced no loaded-module or memory-mapping evidence, and did
+  not know what platform an image was; it now learns that by trying each
+  platform's process listing rather than asking for something the image already
+  knows.
+- A configurable snap root in the recognition index that matching ignored, so
+  the option silently did nothing.
+
+### Known limitations
+
+- **Windows was explicitly deferred for this pass** and remains WINDOWS READY /
+  NOT VALIDATED. No Windows host has run any of it.
+- **No real memory image has been analysed.** The workflow around one is
+  complete and tested; the Volatility3-driving path is exercised only against
+  fixtures, and the capability endpoint says plainly whether a tool is present.
+- **Multi-host is validated on two containers, not two machines.** Containers
+  share the host kernel, so kernel-level evidence across hosts is unvalidated.
+- **No forensic container has been extracted.** Identification only, by design.
+
 ## 0.7.0 — 2026-09-14
 
 JOCKY could read a machine. It could not say what it had been asked to read,

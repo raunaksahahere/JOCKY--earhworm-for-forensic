@@ -11,6 +11,7 @@ from analysis.activity import build_routine
 from analysis.briefs import BriefError, build_brief
 from analysis.case_summary import build_case_summary
 from analysis.search import search
+from backend.versions import versions
 
 
 def _classification(presentation="FOR_REVIEW", category="NEEDS_REVIEW", priority="PRIORITY_2"):
@@ -64,7 +65,7 @@ def report():
     return {
         "investigation_id": "inv-1",
         "investigation": {"title": "Test", "case_id": "CASE-1"},
-        "versions": {"application": "0.7.0", "report_schema": 5, "database_schema": 7},
+        "versions": versions(),
         "activity": {"groups": groups, "group_count": 2, "counts_by_kind": {}},
         "artifacts": [
             {"reference": "ART-0001", "path": "/home/a/Downloads/tool.sh", "filename": "tool.sh",

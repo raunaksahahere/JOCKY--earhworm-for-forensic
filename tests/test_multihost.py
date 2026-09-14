@@ -18,6 +18,7 @@ from backend.evidence_package import build_package, verify_package
 from backend.memory_workflow import MemoryWorkflow
 from backend.paths import Paths
 from backend.storage import Store
+from backend.versions import DATABASE_SCHEMA_VERSION, REPORT_SCHEMA_VERSION, versions
 
 
 def docker_usable():
@@ -176,9 +177,10 @@ def test_an_unextractable_container_is_preserved_and_says_so(store, tmp_path):
 @pytest.fixture
 def package():
     report = {
-        "investigation_id": "inv-1", "report_id": "rep-1", "schema_version": 5,
+        "investigation_id": "inv-1", "report_id": "rep-1",
+        "schema_version": REPORT_SCHEMA_VERSION,
         "investigation": {"title": "Test", "case_id": "CASE-1", "started_at": "t"},
-        "versions": {"application": "0.7.0", "database_schema": 7, "report_schema": 5},
+        "versions": versions(),
         "activity": {"groups": []}, "artifacts": [], "findings": [], "threads": [],
         "record_counts": {"artifacts": 0},
         "recognition": {"recognition_version": 1},
@@ -201,7 +203,7 @@ def test_the_package_describes_itself(package):
         manifest = json.loads(archive.read("MANIFEST.json"))
     assert manifest["case"]["id"] == "CASE-1"
     assert manifest["investigation"]["id"] == "inv-1"
-    assert manifest["versions"]["database_schema"] == 7
+    assert manifest["versions"]["database_schema"] == DATABASE_SCHEMA_VERSION
     assert manifest["endpoints"][0]["name"] == "lab-1"
     assert manifest["evidence_sources"][0]["sha256"] == "a" * 64
     assert manifest["collectors"]["sources"][0]["status"] == "AVAILABLE"

@@ -271,3 +271,28 @@ def test_enrollment_and_dispatch_reach_the_audit_trail(enrolled, plan):
     assert "endpoint.enrollment_authorized" in actions
     assert "endpoint.enrolled" in actions
     assert "collection.dispatched" in actions
+
+
+def test_the_transport_limit_is_not_below_the_result_limit():
+    """A body cap under the application's own limit drops results at the socket.
+
+    Waitress rejects an oversized body before Flask sees it, so a transport
+    capped below MAX_RESULT_BYTES would silently fail every large collector
+    result -- the one thing in this API that is legitimately large.
+    """
+    import inspect
+
+    from backend import runtime
+    from backend.api import create_app
+    from backend.fleet import MAX_RESULT_BYTES
+
+    source = inspect.getsource(runtime.main)
+    assert "max_request_body_size=app.config[\"MAX_CONTENT_LENGTH\"]" in source, (
+        "the server body limit must be taken from the API's own limit")
+
+    class Stub:
+        stopping = type("Event", (), {"is_set": staticmethod(lambda: False)})()
+        storage_failure = None
+
+    app = create_app(Stub(), "token", "instance")
+    assert app.config["MAX_CONTENT_LENGTH"] > MAX_RESULT_BYTES

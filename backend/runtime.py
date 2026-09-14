@@ -67,8 +67,14 @@ def main():
         service = Workstation(store)
         credential = secrets.token_urlsafe(32)
         app = create_app(service, credential, instance, stop)
+        # The body limit has to match what the API accepts, or the server
+        # rejects a request before Flask ever sees it. An enrolled endpoint
+        # returns collector output, which is the one thing here that is
+        # legitimately large; capping the transport below the application's own
+        # limit would drop those silently at the socket.
         server = create_server(app, host="127.0.0.1", port=0, threads=4, connection_limit=32,
-                               max_request_body_size=1024*1024, channel_timeout=30, ident="JOCKY")
+                               max_request_body_size=app.config["MAX_CONTENT_LENGTH"],
+                               channel_timeout=30, ident="JOCKY")
         thread = threading.Thread(target=server.run, name="jocky-http", daemon=True)
         thread.start()
         def control():

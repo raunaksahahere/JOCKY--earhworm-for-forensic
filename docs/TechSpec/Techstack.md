@@ -53,7 +53,7 @@ with nothing to do.
 ## Versions recorded with every result
 
 ```
-application 0.7.0   API 1            report schema 5
+application 0.8.0   API 1            report schema 5
 database 6          IR 1             plan 1          ruleset 1
 ```
 
