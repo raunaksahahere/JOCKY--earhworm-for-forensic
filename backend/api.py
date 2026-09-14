@@ -466,6 +466,32 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
         return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,
                          download_name=f"jocky-routine-{case_id}.pdf")
 
+
+    # --- memory analysis ---------------------------------------------------
+    # An image is registered and hashed before it is analysed, and re-verified
+    # immediately before: attributing findings to bytes that have since changed
+    # is the one thing this workflow exists to prevent.
+
+    @app.get("/api/v1/memory/capability")
+    def memory_capability():
+        return service.memory.capability()
+
+    @app.post("/api/v1/memory/images")
+    def register_memory_image():
+        return service.memory.register_image(body()), 201
+
+    @app.route("/api/v1/memory/analyses", methods=["GET", "POST"])
+    def memory_analyses():
+        if request.method == "POST":
+            return service.memory.analyse(body()), 201
+        return {"items": service.memory.list(
+            case_id=request.args.get("case_id"),
+            investigation_id=request.args.get("investigation_id"))}
+
+    @app.get("/api/v1/memory/analyses/<analysis_id>")
+    def memory_analysis(analysis_id):
+        return service.memory.get(analysis_id)
+
     @app.post("/api/v1/shutdown")
     def stop():
         if shutdown is None:

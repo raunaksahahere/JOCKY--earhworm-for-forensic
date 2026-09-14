@@ -28,6 +28,7 @@ from backend.collectors import DEFAULT_MAX_PROCESSES, MAX_PROCESSES_CEILING, pro
 from backend import plan_runner
 from backend.casework import Casework, local_actor
 from backend.fleet import Fleet
+from backend.memory_workflow import MemoryWorkflow
 from backend.storage import encode, identifier, now
 from backend.versions import versions, REPORT_SCHEMA_VERSION
 from compiler.investigation import IR_VERSION, ProgramError, compile_program, describe
@@ -55,6 +56,7 @@ class Workstation:
         self.store = store
         self.casework = Casework(store)
         self.fleet = Fleet(store, self.casework)
+        self.memory = MemoryWorkflow(store, self.casework)
         self.queue = queue.Queue(maxsize=8)
         self.cancel_events = {}
         self.stopping = threading.Event()
