@@ -34,6 +34,38 @@ REGISTERED = "REGISTERED"
 HASHED = "HASHED"
 FAILED = "FAILED"
 
+#: Where a source has got to in the workflow, separate from whether its bytes
+#: still match. A source can be verified and unprocessed, or processed and since
+#: found to have changed; conflating those loses the distinction that matters.
+PROCESSING_STATES = ("REGISTERED", "ANALYSED", "ANALYSIS_FAILED", "IMPORTED")
+
+#: Forensic container formats JOCKY can identify from the file's own header.
+#:
+#: Identifying a format is not the same as reading it. JOCKY does not parse
+#: forensic containers -- writing another image parser would be the wrong kind
+#: of work when mature read-only tooling exists -- so what it does here is name
+#: the format, keep the digest of the container as acquired, and say plainly
+#: what would be needed to go further. A registered container is preserved
+#: evidence either way.
+CONTAINER_SIGNATURES = (
+    (b"EVF\x09\x0d\x0a\xff\x00", "ewf",
+     "EnCase/EWF container. JOCKY records and preserves it but does not extract its contents; "
+     "use a tool such as ewfmount to expose the image, then register what it exposes."),
+    (b"EVF2\x0d\x0a\x81", "ewf2",
+     "EWF version 2 container. Same handling as EWF: preserved, not extracted."),
+    (b"AFF", "aff",
+     "Advanced Forensic Format container. Preserved, not extracted."),
+    (b"QFI\xfb", "qcow",
+     "QEMU disk image. Preserved, not extracted; expose it read-only with qemu-nbd if its "
+     "contents are needed."),
+    (b"KDMV", "vmdk",
+     "VMware disk image. Preserved, not extracted."),
+    (b"conectix", "vhd",
+     "Virtual hard disk. Preserved, not extracted."),
+)
+#: How many bytes of the header to read when identifying a container.
+SIGNATURE_BYTES = 16
+
 UNVERIFIED = "UNVERIFIED"
 VERIFIED = "VERIFIED"
 MISMATCH = "MISMATCH"
@@ -58,6 +90,25 @@ def local_actor() -> str:
     except OSError:
         user = os.environ.get("USER") or os.environ.get("USERNAME") or "unknown"
     return f"{user}@{socket.gethostname()}"
+
+
+def identify_container(path: Path) -> tuple[str, str]:
+    """Name a forensic container from its own header, without parsing it.
+
+    Returns the format and what JOCKY can and cannot do with it. A raw file is
+    reported as raw rather than as unrecognised: "this is a plain file" is an
+    answer, not a failure.
+    """
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(SIGNATURE_BYTES)
+    except OSError as error:
+        return "unknown", f"The file header could not be read: {error}"
+    for signature, name, detail in CONTAINER_SIGNATURES:
+        if header.startswith(signature):
+            return name, detail
+    return "raw", ("No forensic container signature was found, so the file is treated as raw "
+                   "bytes. It is hashed and preserved exactly as supplied.")
 
 
 def sha256_file(path: Path, *, chunk=CHUNK) -> tuple[str, int]:
@@ -192,19 +243,26 @@ class Casework:
         try:
             if not target.is_file():
                 raise FileNotFoundError(path)
-            size = target.stat().st_size
-            if size > MAX_EVIDENCE_BYTES:
+            if target.stat().st_size > MAX_EVIDENCE_BYTES:
                 raise CaseworkError(
                     f"Evidence source exceeds the {MAX_EVIDENCE_BYTES // (1024**3)} GiB limit")
             digest, hashed_size = sha256_file(target)
+            size = hashed_size
+            # Identify the container from its own header. Identifying a format
+            # is not the same as reading it: JOCKY names it, keeps the digest of
+            # the container as acquired, and says what would be needed to go
+            # further. A registered container is preserved evidence either way.
+            container, container_detail = identify_container(target)
             status, verification = HASHED, VERIFIED
-            detail = "Registered and hashed."
+            detail = f"Registered and hashed. {container_detail}"
         except FileNotFoundError:
             digest, size, hashed_size = None, None, None
+            container, container_detail = None, None
             status, verification = FAILED, MISSING
             detail = "No file exists at that path."
         except PermissionError:
             digest, size, hashed_size = None, None, None
+            container, container_detail = None, None
             status, verification = FAILED, UNVERIFIED
             detail = "The file exists but is not readable by the collecting user."
 
@@ -231,6 +289,10 @@ class Casework:
                  hashed_size if hashed_size is not None else size, digest, acquired_at, now(),
                  provenance["collector"], provenance["collector_version"], status, verification,
                  supersedes, encode(provenance), encode(data.get("metadata") or {})))
+            db.execute(
+                "UPDATE evidence_sources SET processing_status=?,container_format=?,"
+                " format_detail=? WHERE id=?",
+                ("REGISTERED", container, container_detail, evidence_id))
             db.execute(
                 "INSERT INTO evidence_integrity_events"
                 " (evidence_source_id,timestamp,event,expected_sha256,observed_sha256,outcome,detail)"
