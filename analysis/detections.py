@@ -59,7 +59,7 @@ def detect_drivers(drivers: dict | None) -> list:
     if not drivers or drivers.get("classification") == "UNAVAILABLE":
         return []
     findings = []
-    if drivers.get("reference", {}).get("loaded") is False:
+    if not (drivers.get("reference") or {}).get("available", True):
         return [_finding(
             "driver_reference_unavailable", INFO,
             "Loaded drivers were not checked against the known-abused reference",
@@ -72,8 +72,8 @@ def detect_drivers(drivers: dict | None) -> list:
             references=[_rule("DRV-003")])]
 
     for record in (drivers.get("drivers") or [])[:MAX_FINDINGS_PER_RULE * 2]:
-        verdict = record.get("verification", {})
-        if verdict.get("result") != "MATCHED":
+        verdict = record.get("verification") or {}
+        if verdict.get("risk_status") != "MATCHED":
             continue
         by_hash = verdict.get("confidence") == "high"
         rule = "DRV-001" if by_hash else "DRV-002"
@@ -136,16 +136,22 @@ def detect_memory(memory: dict | None) -> list:
             action="Disregard memory findings when assessing this host.",
             references=[_rule("MEM-003")]))
 
+    # The normalized vocabulary, not the analysis tool's column names: a
+    # detection that reads raw tool output silently stops firing the moment the
+    # collector normalizes anything.
     processes = memory.get("processes") or []
     known = {process.get("pid") for process in processes}
     for process in processes[:MAX_FINDINGS_PER_RULE * 4]:
-        parent, name = process.get("ppid"), (process.get("name") or "").lower()
+        parent = process.get("parent_pid")
+        name = (process.get("process_name") or "").lower()
         if parent is None or parent in known or parent == 0 or name in EXPECTED_ORPHANS:
             continue
         findings.append(_finding(
             "memory_orphan_process", LOW,
-            f"A process in the memory image has no parent in the image: {process.get('name')}",
-            (f"{process.get('name')} (pid {process.get('pid')}) records parent pid {parent}, and "
+            "A process in the memory image has no parent in the image: "
+            f"{process.get('process_name')}",
+            (f"{process.get('process_name')} (pid {process.get('pid')}) records parent pid "
+             f"{parent}, and "
              f"no process with that pid appears in the same image. That happens routinely when the "
              "parent exited before the image was taken, and it is also what a process whose parent "
              "was terminated looks like. The image alone does not separate the two."
@@ -155,10 +161,12 @@ def detect_memory(memory: dict | None) -> list:
             action="Compare against execution evidence from the same period to see what the parent "
                    "was and when it exited.",
             unknowns=("Why the parent is absent from the image.",),
-            why=f"Parent pid {parent} of {process.get('name')} is not present in the image.",
+            why=(f"Parent pid {parent} of {process.get('process_name')} is not present in "
+                 "the image."),
             references=[_rule("MEM-001"),
                         _reference("memory_process", f"pid-{process.get('pid')}",
-                                   name=process.get("name"), pid=process.get("pid"))]))
+                                   name=process.get("process_name"),
+                                   pid=process.get("pid"))]))
         if len(findings) >= MAX_FINDINGS_PER_RULE:
             break
     return findings

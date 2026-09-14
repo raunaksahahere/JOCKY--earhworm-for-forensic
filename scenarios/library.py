@@ -231,21 +231,25 @@ def scenario_d() -> dict:
 
 # --- Scenario E ---------------------------------------------------------------
 def scenario_e() -> dict:
-    """A memory image result, with its fixture provenance attached."""
-    memory = {
-        "status": "success", "classification": "HISTORICAL_EVIDENCE", "provenance": "FIXTURE",
-        "synthetic": True, "complete": True, "warnings": [SYNTHETIC_BANNER],
-        "image": "synthetic-lab-image.raw", "tool": "synthetic fixture",
-        "collected_at": _at(60),
-        "processes": [
-            {"pid": 4, "ppid": 0, "name": "System", "synthetic": True},
-            {"pid": 668, "ppid": 4, "name": "smss.exe", "synthetic": True},
-            {"pid": 1204, "ppid": 668, "name": "explorer.exe", "synthetic": True},
-            # The parent of this one is absent from the image on purpose.
-            {"pid": 3390, "ppid": 2884, "name": "updater-service.exe", "synthetic": True},
-        ],
-        "limits": {"read_only": True, "memory_written": False, "code_executed": False},
-    }
+    """A memory image result, with its fixture provenance attached.
+
+    The rows below are shaped exactly as Volatility3's windows.pslist emits
+    them and go through the real normalizer, so this scenario exercises the
+    same path a genuine image would rather than a convenient stand-in.
+    """
+    from analysis.memory import analyze_memory_image
+
+    memory = analyze_memory_image(fixture={"processes": [
+        {"PID": 4, "PPID": 0, "ImageFileName": "System"},
+        {"PID": 668, "PPID": 4, "ImageFileName": "smss.exe"},
+        {"PID": 1204, "PPID": 668, "ImageFileName": "explorer.exe"},
+        # The parent of this one is absent from the image on purpose.
+        {"PID": 3390, "PPID": 2884, "ImageFileName": "updater-service.exe"},
+    ]})
+    memory["synthetic"] = True
+    memory["warnings"] = list(memory.get("warnings", [])) + [SYNTHETIC_BANNER]
+    for process in memory["processes"]:
+        process["synthetic"] = True
     return _result(
         "E", "Memory image with a process whose parent is absent",
         "What was running when the image was taken, and does anything lack a parent?",
@@ -269,16 +273,16 @@ def scenario_f() -> dict:
     drivers = {
         "status": "success", "classification": "CURRENT_OBSERVATION", "synthetic": True,
         "complete": True, "warnings": [SYNTHETIC_BANNER],
-        "reference": {"loaded": bool(known_hash), "source": reference.get("source"),
-                      "entries": reference.get("entry_count")},
+        "reference": {"available": bool(known_hash), "source": reference.get("source"),
+                      "entry_count": reference.get("entry_count")},
         "drivers": [
             {"name": "ext4", "path": "/lib/modules/synthetic/ext4.ko", "kind": "linux_module",
              "sha256": _digest("ext4"), "synthetic": True,
-             "verification": {"result": "UNKNOWN", "confidence": "none",
+             "verification": {"risk_status": "UNKNOWN", "confidence": "none",
                               "detail": "Not present in the reference."}},
             {"name": known_name, "path": f"C:\\\\Windows\\\\System32\\\\drivers\\\\{known_name}",
              "kind": "windows_driver", "sha256": known_hash, "synthetic": True,
-             "verification": {"result": "MATCHED" if known_hash else "UNKNOWN",
+             "verification": {"risk_status": "MATCHED" if known_hash else "UNKNOWN",
                               "confidence": "high" if known_hash else "none",
                               "matched_on": "sha256",
                               "detail": ("Synthetic driver deliberately given a hash from the "

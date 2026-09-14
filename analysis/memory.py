@@ -61,11 +61,16 @@ def _normalize_processes(rows, *, provenance, image, tool):
     for row in rows[:MAX_PROCESSES]:
         if not isinstance(row, dict):
             continue
-        name = row.get("COMM") or row.get("Name") or row.get("name")
+        # Volatility3 names this column differently per plugin: ImageFileName on
+        # windows.pslist, COMM on linux.pslist, Name on mac.pslist.
+        name = (row.get("ImageFileName") or row.get("COMM") or row.get("Name")
+                or row.get("name") or row.get("process_name"))
         records.append({
             "process_name": name,
-            "pid": row.get("PID") or row.get("pid"),
-            "parent_pid": row.get("PPID") or row.get("ppid"),
+            "pid": next((row[key] for key in ("PID", "pid") if row.get(key) is not None), None),
+            # `or` would turn a real ppid of 0 into None; kernel roots have one.
+            "parent_pid": next((row[key] for key in ("PPID", "ppid", "parent_pid")
+                                if row.get(key) is not None), None),
             "user": str(row.get("UID")) if row.get("UID") is not None else None,
             "started_at": row.get("CREATE TIME") or row.get("start_time"),
             "classification": "HISTORICAL_EVIDENCE",

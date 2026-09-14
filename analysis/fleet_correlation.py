@@ -71,7 +71,7 @@ def _observations(result, source):
             name = driver.get("name")
             if not name:
                 continue
-            verification = (driver.get("verification") or {}).get("result")
+            verification = (driver.get("verification") or {}).get("risk_status")
             yield ("driver", name, {"known_abused": verification == "MATCHED",
                                     "sha256": driver.get("sha256")})
     elif source == "BROWSER":
