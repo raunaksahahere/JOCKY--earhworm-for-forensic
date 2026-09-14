@@ -42,9 +42,9 @@ reports/*.json
 # Reference material kept beside the project, not part of it.
 reference-repo/
 referencereppos/
-docs/
-# The project documentation set is part of the deliverable.
-!docs/*.md
+# docs/ was ignored as working material. The documentation set is now part of
+# the deliverable, so it is tracked. A re-include under an ignored directory
+# does not work -- git never descends into one -- so the rule is gone entirely.
 
 # Editor and OS metadata
 .idea/
