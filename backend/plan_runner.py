@@ -116,9 +116,11 @@ def runnable_tasks(plan: dict, *, skip_baseline=True) -> list:
 
     A READY task naming a collector the registry does not recognise is dropped
     with a warning rather than run. That can only happen if a plan and this
-    build disagree, and in that case refusing is the honest answer.
+    build disagree, and in that case refusing is the honest answer -- but it is
+    never a silent one: a task the plan promised and this build cannot keep is
+    the kind of gap an investigator has to be told about.
     """
-    runnable, rejected = [], []
+    runnable = []
     for task in plan.get("tasks", []):
         if task.get("status") != READY:
             continue
@@ -126,10 +128,13 @@ def runnable_tasks(plan: dict, *, skip_baseline=True) -> list:
             continue
         entry = REGISTRY.get(task["source"])
         if entry is None:
+            logging.warning(
+                "Plan task %s names source %s, which this build has no collector for. "
+                "Nothing was collected for it and nothing is claimed about it.",
+                task.get("collection_id"), task["source"])
             continue
         function, dotted, action = entry
         if task.get("collector") != dotted:
-            rejected.append(task)
             logging.warning("Plan task %s names %s for %s; this build provides %s. Task refused.",
                             task.get("collection_id"), task.get("collector"), task["source"], dotted)
             continue

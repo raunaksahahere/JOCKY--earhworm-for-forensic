@@ -30,13 +30,18 @@ class PlatformAdapter:
     name = "unknown"
     #: source -> (collector task name, capability)
     supported: dict = {}
+    #: source -> why this platform does not collect it, where there is more to
+    #: say than "no collector". An investigator reading a skipped source should
+    #: learn where that evidence does come from, if it comes from anywhere.
+    unsupported_reasons: dict = {}
 
     def task_for(self, collection: dict) -> dict:
         source = collection["source"]
         if source not in self.supported:
             return {
                 "collection_id": collection["id"], "source": source, "status": UNSUPPORTED,
-                "detail": f"{self.name} has no collector for {source} in this build.",
+                "detail": self.unsupported_reasons.get(
+                    source, f"{self.name} has no collector for {source} in this build."),
             }
         collector, capability = self.supported[source]
         return {
@@ -65,7 +70,14 @@ class LinuxAdapter(PlatformAdapter):
         "DRIVERS": ("analysis.drivers.collect_driver_inventory", "collect.drivers"),
         "MEMORY": ("analysis.memory.analyze_memory_image", "collect.memory"),
         "SERVICES": ("analysis.system_services.collect_services", "collect.services"),
-        "LOGS": ("analysis.execution_linux.collect_journal", "collect.logs"),
+    }
+    # LOGS is absent deliberately. The system journal is already read as part of
+    # EXECUTION, and offering it separately would promise a collection this
+    # build does not perform on its own. A program asking for it gets a named
+    # UNSUPPORTED task saying where the evidence actually comes from.
+    unsupported_reasons = {
+        "LOGS": ("The system journal is collected as part of EXECUTION on Linux; there is no "
+                 "separate LOGS collector in this build."),
     }
 
 

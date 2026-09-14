@@ -263,3 +263,53 @@ def test_scenario_f_produces_an_explainable_driver_finding():
 def test_an_unknown_scenario_is_refused():
     with pytest.raises(KeyError):
         build_scenario("Z")
+
+
+# --- boundaries that must not drift ------------------------------------------
+def test_no_adapter_offers_a_source_the_registry_cannot_run():
+    """A READY task nothing can execute is a promise the build cannot keep."""
+    from compiler.plan import LinuxAdapter, WindowsAdapter
+
+    for adapter in (LinuxAdapter, WindowsAdapter):
+        for source in adapter.supported:
+            assert source in plan_runner.REGISTRY, (
+                f"the {adapter.name} adapter offers {source}, which no collector backs")
+
+
+def test_a_source_this_build_cannot_run_is_named_rather_than_dropped(caplog):
+    plan = plan_for('CASE "c"\nCOLLECT PROCESSES\nCOLLECT LOGS\n')
+    skipped = {item["source"] for item in plan["unsupported"]}
+    assert "LOGS" in skipped
+    detail = [item for item in plan["unsupported"] if item["source"] == "LOGS"][0]["detail"]
+    assert "EXECUTION" in detail, "a skipped source should say where that evidence does come from"
+
+
+def test_a_ready_task_with_no_collector_warns_rather_than_vanishing(caplog):
+    plan = plan_for('CASE "c"\nCOLLECT NETWORK\n')
+    plan["tasks"][0]["source"] = "UNKNOWN_SOURCE"
+    with caplog.at_level("WARNING"):
+        assert plan_runner.runnable_tasks(plan) == []
+    assert "UNKNOWN_SOURCE" in caplog.text
+    assert "nothing is claimed" in caplog.text
+
+
+def test_the_endpoint_task_queue_has_no_column_a_command_could_live_in():
+    from backend.storage import MIGRATIONS
+
+    ddl = " ".join(statement for group in MIGRATIONS.values() for statement in group)
+    table = ddl[ddl.index("CREATE TABLE endpoint_tasks"):]
+    table = table[:table.index(")")].lower()
+    for word in ("command", "script", "shell", "exec", "payload"):
+        assert word not in table, f"endpoint_tasks has a {word} column"
+
+
+def test_the_agent_contains_no_way_to_execute_anything():
+    import pathlib
+    import re
+
+    import endpoint.agent
+
+    source = pathlib.Path(endpoint.agent.__file__).read_text()
+    forbidden = re.compile(r"(subprocess|os\.system|eval\(|exec\(|popen)")
+    offending = [line.strip() for line in source.splitlines() if forbidden.search(line)]
+    assert not offending, f"the agent must not be able to execute anything: {offending}"
