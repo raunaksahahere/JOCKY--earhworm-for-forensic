@@ -4,6 +4,10 @@ Base branch: `main`.
 Base commit: `8f77a1c3a29206b82088da0433779505461834c6`.
 Working branch: `backend-foundation`.
 
+This is a record of the repository as it stood at that commit, kept for
+provenance. Paths it names are historical: the React dashboard, the Electron
+shell and the native prototypes it describes were removed after v0.9.0.
+
 This local application checkout preserves the complete audited source history
 and directory layout. It has no configured remote. The separate reference
 checkout is unchanged. No project-wide reuse license was found: this document

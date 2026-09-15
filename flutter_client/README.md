@@ -9,8 +9,8 @@ the Python backend in `../compiler`, `../analysis`, `../communication` and
 `../reports`, and duplicating any of it here would create a second, divergent
 authority over forensic behaviour.
 
-The existing React/Vite dashboard in `../dashboard` and the Electron shell in
-`../desktop-app` are untouched; this project coexists with them.
+This client is the only user-facing application. The React/Vite dashboard and
+the Electron shell it once coexisted with have been removed.
 
 ## Backend contract consumed
 
@@ -23,8 +23,8 @@ this client calls exactly those three:
 | `GET /commands` | the command reference and which guided tools to offer |
 | `POST /command` | every observation, from both the Command Center and Tools |
 
-Bootstrap follows the contract the repository already established in
-`../desktop-app/main.cjs`: spawn the packaged engine with `JOCKY_HOST` and
+Bootstrap follows the contract the repository established in the Electron shell
+that preceded this client: spawn the packaged engine with `JOCKY_HOST` and
 `JOCKY_PORT`, then poll `/health` until it answers. The engine emits no
 machine-readable startup document, so its stdout/stderr are captured for
 diagnostics only and are never parsed as a readiness protocol.

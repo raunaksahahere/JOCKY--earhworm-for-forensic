@@ -128,10 +128,6 @@ contracts/           Versioned client contract, API/schema files and fixtures
 packaging/           PyInstaller spec, Linux package and Windows installer build entry points
 scripts/             Build, smoke-test and portable launch helpers
 tests/               Python regression and workstation tests
-dashboard/           Retained legacy React reference; not a runtime dependency
-desktop-app/         Retained legacy Electron reference; not a runtime dependency
-desktop/             Retained legacy packaging reference; not the production entry
-agent/, sha256/      Retained native prototype/vendor code; not shipped or required
 reference-repo/      Ignored reference material
 docs/                Architecture, evidence model, security boundaries, requirement matrix
 ```
