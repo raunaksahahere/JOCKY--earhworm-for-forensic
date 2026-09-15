@@ -142,7 +142,13 @@ void main() {
   test('saving writes atomically and leaves no temp file behind', () async {
     await store.save(const WorkstationRecords());
 
-    final files = temp.listSync().map((e) => e.path.split('/').last).toList();
+    // Split on either separator: on Windows the whole path came back as one
+    // element, so the assertion was looking for a filename in a list of
+    // absolute paths and failing for a reason unrelated to atomicity.
+    final files = temp
+        .listSync()
+        .map((entry) => entry.path.split(RegExp(r'[\\/]')).last)
+        .toList();
     expect(files, contains(RecordStore.fileName));
     expect(files.where((name) => name.endsWith('.tmp')), isEmpty);
   });

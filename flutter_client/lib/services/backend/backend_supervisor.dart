@@ -184,7 +184,24 @@ class BackendLocator {
   static String get distDirectoryName =>
       Platform.isWindows ? 'JOCKY-backend' : 'jocky-backend';
 
-  static String _join(List<String> parts) => parts.join(Platform.pathSeparator);
+  /// Joins path segments without doubling the separator.
+  ///
+  /// The ancestor walk reaches a filesystem root eventually, and a root already
+  /// ends in a separator: `C:\` on Windows, `/` elsewhere. Joining naively
+  /// produced `C:\\backend-dist\...`, which Windows reads as a UNC share and
+  /// then tries to reach over the network -- so the search for a local engine
+  /// stalled on a network timeout and threw instead of moving to the next
+  /// candidate.
+  static String _join(List<String> parts) {
+    final separator = Platform.pathSeparator;
+    return parts.where((part) => part.isNotEmpty).reduce((left, right) {
+      final trimmed = left.endsWith(separator) || left.endsWith('/')
+          ? left.substring(0, left.length - 1)
+          : left;
+      // A bare root keeps its separator: "/" + "x" is "/x", not "x".
+      return trimmed.isEmpty ? '$left$right' : '$trimmed$separator$right';
+    });
+  }
 
   List<String> candidatePaths() {
     if (overridePath != null && overridePath!.isNotEmpty) return [overridePath!];
@@ -199,12 +216,23 @@ class BackendLocator {
     ];
     var ancestor = dir;
     for (var level = 0; level < ancestorSearchDepth; level++) {
-      final parent = Directory(ancestor).parent.path;
-      if (parent == ancestor) break;
+      String parent;
+      try {
+        parent = Directory(ancestor).parent.path;
+      } on FileSystemException {
+        break;
+      }
+      if (parent == ancestor || parent.isEmpty) break;
       ancestor = parent;
       candidates.add(_join([ancestor, 'backend-dist', distDirectoryName, name]));
     }
-    return candidates;
+    // A candidate that begins with two separators is a UNC share, and reaching
+    // for one while looking for a local engine is never right: it is what the
+    // ancestor walk produces when it reaches a root, and Windows answers it
+    // with a network timeout rather than "no".
+    return candidates
+        .where((path) => !path.startsWith(r'\\') && !path.startsWith('//'))
+        .toList();
   }
 
   /// Returns the first candidate that is a runnable file, or null. Existence is
@@ -221,18 +249,38 @@ class BackendLocator {
   /// it fails later with a much less obvious error, so reject it here where the
   /// reason can still be reported.
   static bool isRunnable(String path) {
-    final file = File(path);
-    if (!file.existsSync()) return false;
-    if (Platform.isWindows) return true;
-    return file.statSync().mode & 0x49 != 0;
+    try {
+      final file = File(path);
+      if (!file.existsSync()) return false;
+      if (Platform.isWindows) return true;
+      return file.statSync().mode & 0x49 != 0;
+    } on FileSystemException {
+      // A candidate that cannot even be tested is not the engine. Letting this
+      // escape would abandon the search at the first unreachable path -- a
+      // disconnected network drive among the ancestors, say -- rather than
+      // trying the locations that remain.
+      return false;
+    }
   }
 
   /// Per-candidate verdict for the failure detail, so an operator is told why
   /// each location was rejected instead of only that nothing was found.
+  ///
+  /// Every probe is guarded. This runs precisely when the engine could not be
+  /// found, which is the worst possible moment for the explanation itself to
+  /// throw: on Windows a candidate that resolves to an unreachable share makes
+  /// existsSync wait for a network timeout and then raise, and that exception
+  /// escaped through start() and replaced "the engine is missing, here is where
+  /// I looked" with a filesystem error naming a path nobody recognises.
   String describeSearch() => candidatePaths().map((path) {
-        if (Directory(path).existsSync()) return '$path (is a directory)';
-        if (!File(path).existsSync()) return '$path (missing)';
-        return isRunnable(path) ? '$path (found)' : '$path (not executable)';
+        try {
+          if (Directory(path).existsSync()) return '$path (is a directory)';
+          if (!File(path).existsSync()) return '$path (missing)';
+          return isRunnable(path) ? '$path (found)' : '$path (not executable)';
+        } on FileSystemException catch (failure) {
+          // Why a location could not be checked is diagnostic too.
+          return '$path (could not be checked: ${failure.osError?.message ?? failure.message})';
+        }
       }).join('\n');
 }
 
