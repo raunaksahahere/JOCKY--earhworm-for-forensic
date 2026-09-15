@@ -121,7 +121,12 @@ install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
 set(JOCKY_BACKEND_NAME "JOCKY-backend")
 set(JOCKY_BACKEND_EXE "JOCKY-backend.exe")
 if(DEFINED ENV{JOCKY_BACKEND_DIST})
-  set(JOCKY_BACKEND_DIST "$ENV{JOCKY_BACKEND_DIST}")
+  # Through TO_CMAKE_PATH, because the value arrives as a native Windows path
+  # and this is embedded in a generated CMake script below. A backslash is an
+  # escape character there, so "...\backend-dist\JOCKY-backend" became
+  # "...<backspace>ackend-dist<tab>OCKY-backend" and the install step failed
+  # with a parse error naming a path that appears nowhere.
+  file(TO_CMAKE_PATH "$ENV{JOCKY_BACKEND_DIST}" JOCKY_BACKEND_DIST)
 else()
   set(JOCKY_BACKEND_DIST "${CMAKE_CURRENT_SOURCE_DIR}/../../backend-dist/${JOCKY_BACKEND_NAME}")
 endif()

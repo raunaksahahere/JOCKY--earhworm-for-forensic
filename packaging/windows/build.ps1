@@ -16,7 +16,20 @@ try {
   flutter analyze;   if ($LASTEXITCODE -ne 0) { throw 'Flutter analysis failed' }
   flutter test;      if ($LASTEXITCODE -ne 0) { throw 'Flutter tests failed' }
   flutter build windows --release
-  if ($LASTEXITCODE -ne 0) { throw 'Flutter build failed' }
+  if ($LASTEXITCODE -ne 0) {
+    # MSBuild reports a failing install step as the batch wrapper it ran and
+    # nothing else -- twelve lines of ":cmEnd / exit /b %1" and no cause. The
+    # verbose build carries CMake's own message, which is the one that says
+    # what could not be copied and from where.
+    Write-Host ''
+    Write-Host '--- the build failed; repeating it verbosely for the real error ---'
+    flutter build windows --release --verbose 2>&1 |
+      Select-String -Pattern 'CMake Error', 'CMake Warning', 'file INSTALL',
+                             'JOCKY:', 'cannot|does not exist|Permission|denied',
+                             'error [A-Z]+[0-9]+' |
+      Select-Object -First 40 | ForEach-Object { Write-Host "  $_" }
+    throw 'Flutter build failed'
+  }
 
   $bundle = Join-Path $root 'flutter_client\build\windows\x64\runner\Release'
 
