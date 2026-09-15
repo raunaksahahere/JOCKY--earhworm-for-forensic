@@ -1,5 +1,11 @@
 # Architecture
 
+JOCKY is an end-to-end digital-forensic investigation platform built around a
+proprietary `.x` domain-specific programming language. The language is the
+investigation abstraction; the application is the investigator workspace. Both
+reach the forensic engine through the same compiler, IR and execution plan —
+there is no second path in.
+
 ## Shape
 
 ```

@@ -1,10 +1,12 @@
 # JOCKY — Portable defensive forensic workstation
 
-**JOCKY is a forensic investigation platform built around a proprietary
-domain-specific language.** An investigation is written as a `.x` program that
-compiles — through a real lexer, parser, semantic validator and platform-neutral
-IR — into an execution plan that drives the forensic engine. The application, the
-evidence model and the reports are all downstream of that one abstraction.
+**JOCKY is an end-to-end digital-forensic investigation platform built around a
+proprietary `.x` domain-specific programming language.** An investigation is
+written as a `.x` program that compiles — through a real lexer, parser, semantic
+validator and platform-neutral IR — into an execution plan that drives the
+forensic engine. The language is the investigation abstraction; the application
+is the investigator workspace. The evidence model and the reports are downstream
+of that one abstraction.
 
 ```
 .x source → parser → AST → semantic validation → IR → execution plan
