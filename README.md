@@ -1,12 +1,35 @@
 # JOCKY — Portable defensive forensic workstation
 
+**JOCKY is a forensic investigation platform built around a proprietary
+domain-specific language.** An investigation is written as a `.x` program that
+compiles — through a real lexer, parser, semantic validator and platform-neutral
+IR — into an execution plan that drives the forensic engine. The application, the
+evidence model and the reports are all downstream of that one abstraction.
+
+```
+.x source → parser → AST → semantic validation → IR → execution plan
+          → forensic execution → evidence → analysis → report
+```
+
+The language is not decorative and it is not a second way in: selecting sources
+in the client compiles to the same IR and runs through the same plan, so a
+collection driven from the UI is exactly as reproducible as one driven from a
+program. See [the language reference](docs/InvestigationLanguage.md) and the
+worked programs in [`examples/`](examples), every one of which is compiled by the
+test suite.
+
+It deliberately cannot express a command to run. A program says *what the
+investigation needs*; the platform adapter decides how this operating system
+provides it, choosing only from collectors JOCKY already implements.
+
 JOCKY runs on an **authorized investigation machine**. It collects documented
 operating-system telemetry and artefacts, normalizes them into one evidence
 vocabulary, correlates across sources and across hosts, ranks what deserves
 attention, and produces a report that states its own limits as plainly as its
 findings. Flutter is the desktop presentation; Python owns all forensic logic.
 
-Choose **Analyze This Device** from Overview. Add file or directory sources
+Open **JOCKY Language** to write, compile and run a `.x` investigation, or
+choose **Analyze This Device** from Overview. Add file or directory sources
 explicitly if needed, pick any additional evidence sources, then run collection.
 Each source is its own step, so one that is unavailable becomes a named gap in
 the report rather than a failed collection. Open **Case File** for cases,
@@ -73,7 +96,7 @@ about a minute. See [docs/Demo.md](docs/Demo.md).
 | [Architecture](docs/Architecture.md) | Layering, the compilation chain, storage, the path off SQLite |
 | [Recognition](docs/Recognition.md) | How JOCKY says what a file is, without being fooled by its name |
 | [Review briefs](docs/ReviewBriefs.md) | One-page answers, the routine report, the evidence package |
-| [Investigation language](docs/InvestigationLanguage.md) | Grammar, statements, compilation |
+| [The JOCKY language](docs/InvestigationLanguage.md) | Why it exists, syntax, semantics, the compiler pipeline and IR |
 | [Evidence model](docs/EvidenceModel.md) | The vocabulary for what is known and what is not |
 | [Security boundaries](docs/SecurityBoundaries.md) | What is absent, and where each boundary is enforced |
 | [Endpoint protocol](docs/EndpointProtocol.md) | How an authorized machine is collected from |
@@ -91,7 +114,8 @@ about a minute. See [docs/Demo.md](docs/Demo.md).
 backend/             SQLite, application service, collectors, authenticated API/runtime, PDF
 flutter_client/      Windows/Linux Flutter app, client services and widget/integration tests
 analysis/            Existing read-only forensic analysis modules
-compiler/            Command parser, investigation language, IR and execution plans
+compiler/            The JOCKY language: grammar, parser, semantics, IR, predicates, plans
+examples/            Worked .x investigation programs, all compiled by the test suite
 endpoint/            The agent that collects on another authorized machine
 scenarios/           Deterministic synthetic lab scenarios, labelled throughout
 communication/       Existing dispatcher and development compatibility API

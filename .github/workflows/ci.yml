@@ -49,7 +49,7 @@ jobs:
       - name: Check the evidence package is complete
         run: |
           set -euo pipefail
-          for file in investigator-report.pdf report.json program.jocky ir.json \
+          for file in investigator-report.pdf report.json program.x ir.json \
                       execution-plan.json endpoint-tasks.json \
                       cross-host-correlation.json audit-trail.json; do
             test -s "demo-output/$file" || { echo "missing: $file"; exit 1; }
@@ -78,7 +78,7 @@ jobs:
           name: demo-evidence-package
           path: |
             demo-output/investigator-report.pdf
-            demo-output/program.jocky
+            demo-output/program.x
             demo-output/ir.json
             demo-output/execution-plan.json
             demo-output/cross-host-correlation.json

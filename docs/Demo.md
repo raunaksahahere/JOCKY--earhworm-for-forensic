@@ -31,12 +31,12 @@ case
   -> detailed evidence package
 ```
 
-Thirteen steps, each printed as it completes.
+Fourteen steps, each printed as it completes.
 
 | Step | What happens |
 |------|--------------|
 | 1 | A case is opened, with an examiner and a reference. |
-| 2 | An investigation program is written in the JOCKY language. |
+| 2 | A `.x` investigation program is written in the JOCKY language. |
 | 3 | The program is parsed to an AST. |
 | 4 | The AST is compiled to platform-neutral IR. |
 | 5 | The IR is compiled to an execution plan for this platform. |
@@ -44,10 +44,17 @@ Thirteen steps, each printed as it completes.
 | 7 | The plan is dispatched to every endpoint and collected in parallel. |
 | 8 | The same program runs against this workstation. |
 | 9 | Normalization, correlation, threads, timeline and findings. |
-| 10 | Cross-host correlation over the endpoint results. |
-| 11 | The six synthetic lab scenarios. |
-| 12 | The evidence package is written. |
-| 13 | A statement of what the run did and did not establish. |
+| 10 | The program's `FILTER` is answered against the collected evidence. |
+| 11 | Cross-host correlation over the endpoint results. |
+| 12 | The six synthetic lab scenarios. |
+| 13 | The evidence package is written. |
+| 14 | A statement of what the run did and did not establish. |
+
+The demo program is not a minimal one: it uses a `LET` binding, a `DEFINE`/`RUN`
+playbook, a `WHEN PLATFORM IS linux` guard and a compound `FILTER`, so the run
+exercises the language rather than only the collectors. The local collection is
+driven by that program — not by a list of selected sources — so what step 5
+planned is what step 8 executes.
 
 ## Two kinds of evidence, never mixed
 
@@ -88,7 +95,7 @@ conflated.
 |------|----------|
 | `investigator-report.pdf` | The concise report an investigator reads. |
 | `report.json` | The complete report payload, including every appendix. |
-| `program.jocky` | The investigation program that drove the collection. |
+| `program.x` | The investigation program that drove the collection. |
 | `ir.json` | The compiled platform-neutral IR. |
 | `execution-plan.json` | The plan built for this platform. |
 | `endpoint-tasks.json` | Every endpoint task with its result and result hash. |

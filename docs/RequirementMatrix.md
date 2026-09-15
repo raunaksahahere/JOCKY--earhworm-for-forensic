@@ -21,28 +21,60 @@ about Windows behaviour should be read into it.
 
 ---
 
-## A — Investigation language
+## A — The JOCKY language
 
 **IMPLEMENTED · LINUX VALIDATED**
 
 | | |
 |--|--|
+| Source extension | `.x` |
 | Grammar | `compiler/investigation.lark` |
 | Parser, validator, IR | `compiler/investigation.py` |
-| Tests | `tests/test_investigation_language.py` (22) |
+| Predicate evaluation | `compiler/predicate.py` |
+| Worked programs | `examples/*.x` (5) |
+| Tests | `tests/test_investigation_language.py` (56), `tests/test_predicate.py` (28), `tests/test_examples.py` (18 + 4 skipped) |
 
-Statements: `CASE`, `TARGET`, `WINDOW`, `LET`, `COLLECT`, `FILTER`, `CORRELATE`,
-`TIMELINE`, `REPORT`. Validation refuses a program with no case, no collection,
-a duplicated collection, a relative `COLLECT FILES` path, a `CORRELATE` naming a
-subject the program never collects, an invalid `MATCHES` pattern, `COLLECT
-MEMORY` with no image, or a window beyond 90 days.
+Statements: `CASE`, `TARGET`, `WINDOW`, `LET`, `DEFINE`, `RUN`, `WHEN`,
+`COLLECT`, `FILTER`, `CORRELATE`, `TIMELINE`, `REPORT`.
+
+| Feature | Status |
+|---------|--------|
+| Core statements | IMPLEMENTED |
+| `DEFINE`/`RUN` playbooks, expanded into the IR with cycle and depth detection | IMPLEMENTED |
+| `WHEN PLATFORM IS` / `WHEN SOURCE … IS SUPPORTED`, resolved by the adapter | IMPLEMENTED |
+| Boolean predicates: `AND`, `OR`, `NOT`, parentheses, correct precedence | IMPLEMENTED |
+| List values and `ONEOF` membership | IMPLEMENTED |
+| Named reports (`REPORT BOTH AS "…"`) | IMPLEMENTED |
+| `FILTER` applied to collected evidence as a selection | IMPLEMENTED |
+
+Validation refuses a program with no case, no collection, a duplicated
+collection under the same conditions, a relative `COLLECT FILES` path, a
+`CORRELATE` naming a subject the program never collects, an invalid `MATCHES`
+pattern anywhere in an expression, `ONEOF` without a list, a single-value
+operator given a list, an undefined variable, a `RUN` of an undefined playbook,
+a playbook that runs itself, a duplicate `DEFINE`, `COLLECT MEMORY` with no
+image, or a window beyond 90 days.
+
+Every statement is read out of the parse tree by node and token type rather than
+by position. An earlier revision indexed children positionally; naming the
+keywords as terminals changed what the parser keeps in the tree and broke the
+entire front end at once.
 
 ## B — Platform-neutral IR
 
 **IMPLEMENTED · LINUX VALIDATED**
 
-`IR_VERSION = 1`. `serialize`/`deserialize` round-trip is asserted. The IR names
-sources and bounded options; it contains no platform detail and no command.
+`IR_VERSION = 2`. `serialize`/`deserialize` round-trip is asserted, including for
+predicate trees and conditions. The IR names sources and bounded options; it
+contains no platform detail and no command.
+
+Version 2 added playbooks, `WHEN` conditions, predicate trees, list values and
+named reports. Filters and reports changed shape, so a version-1 IR is refused
+rather than misread — `tests/test_investigation_language.py` asserts that.
+
+A `WHEN` guard is carried in the IR and resolved only when a plan is built, which
+is what keeps the IR platform-neutral: the same IR yields a different plan per
+platform.
 
 ## C — Execution plan and platform adapter
 
@@ -242,6 +274,50 @@ degrades a collection to `partially_completed` rather than failing it.
 and every component version. A collection driven from the UI is as reproducible
 as one driven from the language, because the UI's source selection is compiled
 into a program first.
+
+## AK — Filter selection over collected evidence
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+| | |
+|--|--|
+| Evaluator | `compiler/predicate.py` |
+| Selection over a report | `analysis/selection.py` |
+| Route | `GET /api/v1/investigations/<id>/selection` |
+| Tests | `tests/test_predicate.py` (28), `tests/test_selection.py` (11) |
+
+A `FILTER` states what the investigation is interested in, and it is answered
+against what was collected. It does **not** reduce evidence: evidence is
+registered and hashed whole, and a selection is a view over it. A test deep-
+copies the report, runs a selection and asserts the report is unchanged.
+
+The filters come from the stored IR rather than from the request, so a selection
+is reproducible from the record. An empty selection means the evidence does not
+answer the question — not that the evidence is gone, and the response says so.
+
+## AL — The language in the application
+
+**IMPLEMENTED · LINUX VALIDATED**
+
+| | |
+|--|--|
+| Editor | `flutter_client/lib/features/language/language_screen.dart` |
+| Repository | `flutter_client/lib/repositories/language_repository.dart` |
+| Tests | `flutter_client/test/widget/language_screen_test.dart` (9) |
+
+**JOCKY Language** in the client: load or write a `.x` program, compile it, read
+the IR and the execution plan, run it, open the resulting investigation.
+
+The client never parses, validates or explains a program itself — every result
+comes from `POST /api/v1/programs/compile`, the same compiler a collection runs
+through, so the editor cannot report a program valid that a collection would
+refuse. A widget test asserts the editor sends exactly the text on screen, that
+running is disabled until a program compiles, and that a collection started from
+the editor carries `program` and not a source list.
+
+The five examples the editor offers are generated from `examples/*.x` by
+`scripts/generate_language_examples.py`; `tests/test_examples.py` fails if the
+two copies drift.
 
 ## U — Report and evidence package
 
@@ -460,3 +536,71 @@ Writing another image parser would be the wrong kind of work when mature
 read-only tooling exists. A container is named, hashed and preserved, and the
 record says what would expose its contents (`ewfmount`, `qemu-nbd`). No
 container has been extracted or validated beyond identification.
+
+---
+
+# The problem statement, mapped
+
+The Smart India Hackathon problem statement asks for a proprietary programming
+language and a set of capabilities, some of which are offensive. This is what
+this repository does and does not implement, stated so a reviewer can tell the
+difference without reading the code.
+
+## Implemented
+
+| Requirement | Status |
+|-------------|--------|
+| A proprietary domain-specific language, with its own grammar | IMPLEMENTED · LINUX VALIDATED |
+| Lexer, parser, AST, semantic validation | IMPLEMENTED · LINUX VALIDATED |
+| Variables, expressions, predicates, list values | IMPLEMENTED · LINUX VALIDATED |
+| Reusable functions / playbooks (`DEFINE`/`RUN`) | IMPLEMENTED · LINUX VALIDATED |
+| Conditional compilation (`WHEN`), resolved per platform | IMPLEMENTED · LINUX VALIDATED |
+| Compiler to a platform-neutral IR, versioned and serializable | IMPLEMENTED · LINUX VALIDATED |
+| IR → platform execution plan, via pluggable adapters | IMPLEMENTED (Linux) · WINDOWS READY / NOT VALIDATED |
+| Deterministic, reproducible compilation | IMPLEMENTED · LINUX VALIDATED |
+| Platform adaptation that is traceable and auditable | IMPLEMENTED · LINUX VALIDATED |
+| Authorized forensic acquisition driven by the language | IMPLEMENTED · LINUX VALIDATED |
+| Evidence model, hashing, chain of custody, audit trail | IMPLEMENTED · LINUX VALIDATED |
+| Multi-endpoint architecture, enrollment, dispatch, retry | IMPLEMENTED · LINUX VALIDATED |
+| Cross-source and cross-host correlation | IMPLEMENTED · LINUX VALIDATED |
+| Reporting and evidence packaging | IMPLEMENTED · LINUX VALIDATED |
+| Central investigator application | IMPLEMENTED · LINUX VALIDATED |
+
+## Partial, or validated only in part
+
+| Requirement | Status |
+|-------------|--------|
+| Windows forensic collection | WINDOWS READY / NOT VALIDATED — six sources mapped, fixture-tested, no real Windows host has run a plan |
+| Windows application build and packaged runtime | LINUX VALIDATED equivalent exists; the Windows build and packaged runtime are checked on a CI runner |
+| Real memory-image analysis | FIXTURE/SYNTHETIC — the workflow, registration, hashing and provenance are real; no genuine memory image has been analysed |
+| Forensic container contents | PARTIALLY IMPLEMENTED — identified from header, hashed, registered and preserved; contents are not extracted |
+| Physical multi-host validation | PARTIALLY IMPLEMENTED — the endpoint architecture is exercised, but the demo's endpoints are agents on one machine |
+
+## Intentionally not implemented
+
+These are in the problem statement. They are absent by decision, not by
+omission, because this is a defensive tool for authorized investigation. No part
+of the repository approximates them, and no claim in any document should be read
+as implying otherwise.
+
+| Capability | Status |
+|------------|--------|
+| Polymorphic payload generation | NOT IMPLEMENTED |
+| Obfuscation for evasion | NOT IMPLEMENTED |
+| In-memory execution, reflective loading | NOT IMPLEMENTED |
+| Process injection | NOT IMPLEMENTED |
+| API unhooking, direct syscalls | NOT IMPLEMENTED |
+| BYOVD, driver loading or exploitation | NOT IMPLEMENTED |
+| EDR/AV bypass or security-control disabling | NOT IMPLEMENTED |
+| Persistence | NOT IMPLEMENTED |
+| Credential theft | NOT IMPLEMENTED |
+| Covert C2, domain fronting, stealth networking | NOT IMPLEMENTED |
+| Remote shell or arbitrary remote command execution | NOT IMPLEMENTED |
+
+Where the problem statement's *compiler* requirements are demonstrated, they are
+demonstrated benignly: platform-neutral compilation, IR transformation, guard
+resolution per platform, reproducible builds and deterministic output. An
+enrolled endpoint receives a named forensic source request and nothing else;
+there is no path in the language, the IR or the plan from a program to an
+arbitrary execution. See [SecurityBoundaries.md](SecurityBoundaries.md) for
+where each boundary is enforced.
