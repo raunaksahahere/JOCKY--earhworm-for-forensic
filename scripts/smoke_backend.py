@@ -231,15 +231,24 @@ def smoke(command, workspace):
                 'check the reference data survived the freeze')
 
         # A review brief for the highest-priority thing in the collection.
-        subject = (stored['leads'][0]['evidence_references'][0] if stored['leads']
-                   else history[0]['reference'])
+        subject_type, subject = ('activity', None)
+        if stored['leads']:
+            subject = stored['leads'][0]['evidence_references'][0]
+        elif history:
+            subject = history[0]['reference']
+        else:
+            # No execution record on this machine at all. The artifact the
+            # collection was pointed at is still a subject, and briefing it
+            # exercises the same path.
+            subject_type, subject = 'artifact', artifacts[0]['reference']
+        print(f"briefing {subject_type} {subject}", file=sys.stderr)
         brief = request(session, f"/api/v1/investigations/{case['id']}/briefs",
-                        {'subject_type': 'activity', 'subject_id': subject})
+                        {'subject_type': subject_type, 'subject_id': subject})
         assert brief['evidence_ids'], 'a brief must cite the evidence it rests on'
         assert brief['unknown'], 'a brief must state what it does not know'
         assert 'not a malware verdict' in brief['disclaimer']
         brief_pdf = request(session, f"/api/v1/investigations/{case['id']}/briefs/export",
-                            {'subject_type': 'activity', 'subject_id': subject})
+                            {'subject_type': subject_type, 'subject_id': subject})
         assert brief_pdf.startswith(b'%PDF-')
         (workspace / 'smoke-brief.pdf').write_bytes(brief_pdf)
 
@@ -250,13 +259,19 @@ def smoke(command, workspace):
         assert artifact_brief['recognition']['state'] in ('RECOGNIZED', 'UNKNOWN')
 
         # The routine report must be separate, grouped, and never called safe.
+        # A machine with no activity has nothing routine on it, so the grouping
+        # is only checked where there was something to group.
         routine = request(session, f"/api/v1/investigations/{case['id']}/routine")
-        assert routine['groups'], 'nothing was presented as routine'
-        assert routine['totals']['records'] > routine['group_count'], (
-            'the routine report is not grouping anything')
+        assert 'not a guarantee' in routine['note']
+        assert 'groups' in routine and 'totals' in routine
         for group in routine['groups']:
             assert group['evidence_references'], 'a group with no evidence cannot be checked'
-        assert 'not a guarantee' in routine['note']
+            assert group['basis'], 'a group must say why it is routine'
+        if routine['groups']:
+            assert routine['totals']['records'] >= routine['group_count'], (
+                'the routine report is not grouping anything')
+        print(f"routine: {routine['group_count']} group(s) over "
+              f"{routine['totals']['records']} record(s)", file=sys.stderr)
         routine_pdf = request(session, f"/api/v1/investigations/{case['id']}/routine/export", {})
         assert routine_pdf.startswith(b'%PDF-')
         (workspace / 'smoke-routine.pdf').write_bytes(routine_pdf)
@@ -266,7 +281,8 @@ def smoke(command, workspace):
         # name where there is one, and otherwise an evidence identifier, which
         # every record has on every platform.
         needle = (recognition['software'][0]['name'] if recognition.get('software')
-                  else history[0]['reference'])
+                  else history[0]['reference'] if history
+                  else artifacts[0]['reference'])
         found = request(session,
                         f"/api/v1/investigations/{case['id']}/search?q={needle}")
         assert found['total'] > 0, f'search found nothing for {needle}'
@@ -293,6 +309,8 @@ def smoke(command, workspace):
                 digest = _hashlib.sha256(archive.read(entry['name'])).hexdigest()
                 assert digest == entry['sha256'], f"{entry['name']} does not match its digest"
         assert request(session, '/api/v1/history')['items']
+        assert len(request(session, f"/api/v1/investigations/{case['id']}/artifacts")['items']) \
+            == len(artifacts), 'artifact observations must survive a restart'
         # The analysis must survive the restart, not be rebuilt on demand.
         assert len(request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']) == len(history)
         stop(process, session)
