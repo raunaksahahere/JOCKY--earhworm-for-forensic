@@ -338,6 +338,11 @@ Windows adapter entry at all; `GET /api/v1/collection-sources` reports that per
 source with the reason, and the client disables them rather than letting an
 investigator select one and find no evidence in the report.
 
+Software recognition has no Windows source either: package ownership and snap
+metadata are Linux, so every Windows artifact comes back unaccounted for. The
+report names which recognition sources it could read, so "recognized nothing" is
+distinguishable from "had nothing to recognize with".
+
 `WindowsAdapter.validated` is `False` and `describe_plan` prints `NOT VALIDATED
 ON A REAL HOST` on every Windows plan. Nothing in this project should be
 described as *forensically* working on Windows.

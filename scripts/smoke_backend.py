@@ -205,19 +205,30 @@ def smoke(command, workspace):
         assert offered['evidence_package']['records'] > 0
 
         # --- what an investigator actually does with a finished collection ---
-        # Recognition must have run and been stored, not recomputed on demand.
-        # Recognition must have run and must say which of its sources it could
-        # read. It is not required to have recognized anything: its sources are
-        # a package database and a snap directory, neither of which exists on
-        # Windows, so the honest result there is nothing recognized and the
-        # sources reported unavailable. Requiring a non-zero count would be
+        # Recognition must have run, been stored rather than recomputed, and
+        # said which of its sources it could read. It is not required to have
+        # recognized anything: package ownership and snap metadata are Linux
+        # sources, so on Windows the honest result is nothing accounted for and
+        # both sources reported unavailable. Requiring a non-zero count would be
         # requiring the examined machine to be a Linux one.
+        #
+        # Where a package database *was* readable, recognizing nothing means the
+        # reference data did not survive the freeze, and that is a real failure.
         recognition = stored['recognition']
-        assert 'artifacts_recognized' in recognition, 'recognition did not run at all'
+        assert recognition.get('artifacts_examined'), 'recognition did not run'
+        assert recognition.get('sources'), 'recognition did not report which sources it read'
+        assert all(source['status'] in ('AVAILABLE', 'NOT_AVAILABLE')
+                   for source in recognition['sources']), recognition['sources']
         assert 'not a statement that the file is safe' in recognition['note']
-        print(f"recognition: {recognition['artifacts_recognized']} of "
-              f"{recognition.get('artifacts_examined', 0)} artifact(s) accounted for",
-              file=sys.stderr)
+        readable = [source['source'] for source in recognition['sources']
+                    if source['status'] == 'AVAILABLE']
+        print(f"recognition read {readable or 'nothing'}; accounted for "
+              f"{recognition['artifacts_recognized']} of "
+              f"{recognition['artifacts_examined']} artifact(s)", file=sys.stderr)
+        if 'dpkg' in readable:
+            assert recognition['artifacts_recognized'] > 0, (
+                'a package database was readable and nothing was recognized; '
+                'check the reference data survived the freeze')
 
         # A review brief for the highest-priority thing in the collection.
         subject = (stored['leads'][0]['evidence_references'][0] if stored['leads']

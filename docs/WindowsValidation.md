@@ -112,6 +112,30 @@ the client shows those sources disabled rather than letting an investigator
 select one, watch the collection succeed and find no evidence in the report. A
 silent gap is the one kind a forensic tool must never produce.
 
+### Recognition has no Windows source
+
+`analysis/recognition.py` accounts for a file from package ownership, snap
+metadata and a small set of vendor installation layouts. The first two are Linux
+sources and the third only fires on layouts that exist on Linux, so **on Windows
+nothing is recognized**: every artifact comes back unaccounted for.
+
+That is the honest result rather than a bug, and the report says which sources
+it could read so the two are distinguishable:
+
+```json
+"sources": [
+  {"source": "dpkg",             "status": "NOT_AVAILABLE"},
+  {"source": "snap",             "status": "NOT_AVAILABLE"},
+  {"source": "vendor reference", "status": "AVAILABLE"}
+]
+```
+
+"Recognized nothing" and "had nothing to recognize with" are different
+statements, and an investigator reading a Windows report needs the second.
+Closing this would mean reading the Windows installer database, the uninstall
+registry keys or Authenticode signatures — a new collector, and one that would
+need validating against a host before it could be trusted.
+
 ## What would close the gap
 
 1. Run a collection on a real Windows host with Sysmon and 4688 auditing
