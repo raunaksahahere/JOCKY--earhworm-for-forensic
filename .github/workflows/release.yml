@@ -117,6 +117,17 @@ jobs:
           test -d /opt/jocky-workstation/backend/_internal
           sudo dpkg -r jocky
 
+      - name: Install the package in a clean environment and use it there
+        # The check above installs on the runner, which already has Python, the
+        # libraries and the source tree, so it can only confirm the files are
+        # where the packaging says. This installs into a container that has none
+        # of them and then uses the installed engine: collection, both reports,
+        # a review brief and the evidence package. A package that runs on the
+        # machine that built it has proved nothing.
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: bash validation/clean_install.sh "build/deb/jocky_${JOCKY_VERSION}_amd64.deb"
+
       - uses: actions/upload-artifact@v4
         with:
           name: jocky-linux-deb
@@ -167,11 +178,6 @@ jobs:
         run: flutter test test/integration/packaged_engine_test.dart
         env:
           JOCKY_TEST_BUNDLE: build/windows/x64/runner/Release
-
-      - name: Install the package in a clean environment and use it there
-        # A package that runs on the machine that built it has proved nothing:
-        # the build host has the interpreter, the libraries and the source tree.
-        run: bash validation/clean_install.sh "$(ls -t build/deb/jocky_*_amd64.deb | head -1)"
 
       - name: Build the portable archive
         env:
