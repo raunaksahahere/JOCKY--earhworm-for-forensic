@@ -72,9 +72,15 @@ echo "   investigation $CASE created"
 
 post "/api/v1/investigations/$CASE/collect" \
      '{"paths":["/bin/sh"],"window_hours":6,"sources":["NETWORK","DRIVERS","SERVICES"]}' >/dev/null
-for _ in $(seq 1 600); do
-    STATUS=$(get "/api/v1/investigations/$CASE" | value status)
-    case "$STATUS" in completed|partially_completed|failed) break;; esac
+# Read the status from the transition log rather than from the investigation
+# object. The investigation carries a nested `device` whose own "status" comes
+# first in the JSON, so a flat text match on the object reports the device's
+# collection status -- which is "success" from the first second and never
+# changes, making the poll loop wait forever for a state it already had.
+state() { get "/api/v1/investigations/$1/transitions" | grep -o '"state": *"[^"]*' | tail -1 | sed 's/.*"//'; }
+for _ in $(seq 1 300); do
+    STATUS=$(state "$CASE")
+    case "$STATUS" in completed|partially_completed|failed|cancelled) break;; esac
     sleep 1
 done
 echo "   collection finished: $STATUS"
