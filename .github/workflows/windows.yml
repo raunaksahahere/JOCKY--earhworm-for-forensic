@@ -1,0 +1,452 @@
+# Windows build, packaged-runtime validation, and release publication.
+#
+# Three separate claims, deliberately not blurred together:
+#
+#   Windows application build      this workflow proves it, on a real runner
+#   Windows packaged runtime       this workflow proves it, against the final
+#                                  artifact rather than the source tree
+#   Windows forensic collection    this workflow proves nothing about it
+#
+# The third needs a real investigated Windows host and has not happened. An
+# executable that launches is not a validated forensic collector, and
+# docs/WindowsValidation.md says so in those words.
+#
+# Nothing is published until the artifact that would be published has itself
+# started, served its API and completed a read-only workflow. After publishing,
+# the asset is downloaded back, checked byte-for-byte against what was tested,
+# and run again -- so the file on the Releases page is the file that passed.
+name: Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (x.y.z). Defaults to the repository version.'
+        required: false
+      publish:
+        description: 'Publish the artifact to the GitHub Release for that version'
+        type: boolean
+        default: false
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  # Pinned to the toolchain this repository is developed and tested against.
+  FLUTTER_VERSION: '3.47.2'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  # ---------------------------------------------------------------- version --
+  # One source of truth. The tag, the package filename, the installer, the
+  # Flutter build and the release title all come from here, so a mismatch
+  # between any of them is impossible rather than merely unlikely.
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The repository's own version, read from where the application reads it.
+          declared="$(sed -n 's/^APPLICATION_VERSION = "\(.*\)"$/\1/p' backend/versions.py)"
+          [[ -n "$declared" ]] || { echo "::error::No APPLICATION_VERSION in backend/versions.py"; exit 1; }
+
+          if [[ "${GITHUB_REF_TYPE}" == tag ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="$declared"
+          fi
+
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::Version must be x.y.z, got '$version'"; exit 1; }
+
+          # A build whose artifacts would be named differently from the version
+          # the application reports is a build nobody can trace afterwards.
+          [[ "$version" == "$declared" ]] || {
+            echo "::error::Asked to build $version but backend/versions.py declares $declared."
+            echo "::error::Bump the repository version first so the artifact and the"
+            echo "::error::application agree about what this is."
+            exit 1; }
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version (tag v$version)"
+
+  # ----------------------------------------------------------------- windows --
+  windows:
+    needs: version
+    runs-on: windows-latest
+    outputs:
+      portable: ${{ steps.package.outputs.portable }}
+      installer: ${{ steps.package.outputs.installer }}
+      sha256: ${{ steps.package.outputs.sha256 }}
+      bytes: ${{ steps.package.outputs.bytes }}
+      runner: ${{ steps.environment.outputs.runner }}
+      python: ${{ steps.environment.outputs.python }}
+      flutter: ${{ steps.environment.outputs.flutter }}
+      python_tests: ${{ steps.python_tests.outputs.summary }}
+      flutter_tests: ${{ steps.flutter_tests.outputs.summary }}
+    steps:
+      # --- Setup Windows ----------------------------------------------------
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+
+      - name: Record the build environment
+        id: environment
+        shell: pwsh
+        run: |
+          $os = (Get-CimInstance Win32_OperatingSystem)
+          $runner = "$($os.Caption) $($os.Version) (build $($os.BuildNumber))"
+          $python = (python --version) -replace '^Python\s+', ''
+          $flutter = ((flutter --version --machine | ConvertFrom-Json).frameworkVersion)
+          "runner=$runner"   | Out-File $env:GITHUB_OUTPUT -Append
+          "python=$python"   | Out-File $env:GITHUB_OUTPUT -Append
+          "flutter=$flutter" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Runner : $runner"
+          Write-Host "Python : $python"
+          Write-Host "Flutter: $flutter"
+          Write-Host "Inno   : $((Get-Command iscc -ErrorAction SilentlyContinue).Source)"
+
+      # --- Install dependencies --------------------------------------------
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Install Flutter dependencies
+        working-directory: flutter_client
+        run: flutter pub get
+
+      # --- Run Python tests -------------------------------------------------
+      # The whole suite. Tests that exercise POSIX file mechanics rather than
+      # JOCKY's behaviour skip themselves with a stated reason, so the skip
+      # count is visible here rather than hidden behind a deselection flag that
+      # could also swallow a real Windows failure.
+      - name: Run Python tests
+        id: python_tests
+        shell: pwsh
+        run: |
+          $output = python -m pytest -q --tb=short 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw 'Python tests failed on Windows' }
+          $summary = ($output -split "`n" | Where-Object { $_ -match '\d+ passed' } |
+                      Select-Object -Last 1).Trim()
+          "summary=$summary" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Python: $summary"
+
+      # --- Flutter analyze --------------------------------------------------
+      - name: Flutter analyze
+        working-directory: flutter_client
+        run: flutter analyze
+
+      # --- Flutter tests ----------------------------------------------------
+      - name: Run Flutter tests
+        id: flutter_tests
+        shell: pwsh
+        working-directory: flutter_client
+        run: |
+          $output = flutter test 2>&1 | Out-String
+          Write-Host $output
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter tests failed on Windows' }
+          $summary = ($output -split "`n" | Where-Object { $_ -match 'All tests passed|\+\d+' } |
+                      Select-Object -Last 1).Trim()
+          "summary=$summary" | Out-File $env:GITHUB_OUTPUT -Append
+
+      # --- Freeze backend ---------------------------------------------------
+      - name: Freeze the backend
+        run: python scripts/build_backend.py
+
+      # --- Verify backend bundle --------------------------------------------
+      # Checked here, before anything is built on top of it. Every file listed
+      # is read at import time, so a missing one is not a degraded feature: the
+      # engine will not start at all.
+      - name: Verify the frozen backend bundle
+        shell: pwsh
+        run: |
+          $dist = 'backend-dist\JOCKY-backend'
+          $required = @(
+            "$dist\JOCKY-backend.exe",
+            "$dist\_internal",
+            "$dist\_internal\compiler\grammar.lark",
+            "$dist\_internal\compiler\investigation.lark",
+            "$dist\_internal\analysis\data\driver_risk_reference.json",
+            "$dist\_internal\analysis\data\software_reference.json",
+            "$dist\_internal\assets\fonts"
+          )
+          foreach ($path in $required) {
+            if (-not (Test-Path $path)) { throw "the frozen backend is missing $path" }
+            Write-Host "ok      $path"
+          }
+          $runtime = Get-ChildItem "$dist\_internal" -Filter 'python*.dll' -File
+          if (-not $runtime) { throw 'the frozen backend carries no Python runtime' }
+          Write-Host "ok      bundled interpreter: $($runtime[0].Name)"
+          # The database migrations live in the frozen module, not as data files.
+          # Importing them is the only honest check that they came along.
+          & "$dist\JOCKY-backend.exe" --help | Out-Null
+          Write-Host 'ok      the frozen engine runs and parses its arguments'
+
+      - name: Engine integration smoke test
+        run: python scripts/smoke_backend.py --executable backend-dist/JOCKY-backend/JOCKY-backend.exe
+
+      # --- Build Windows application ----------------------------------------
+      - name: Build the Windows application
+        run: pwsh packaging/windows/build.ps1
+
+      - name: Verify the built bundle starts its own engine
+        working-directory: flutter_client
+        run: flutter test test/integration/packaged_engine_test.dart
+        env:
+          JOCKY_TEST_BUNDLE: build/windows/x64/runner/Release
+
+      # --- Package Windows artifact -----------------------------------------
+      - name: Package the Windows artifacts
+        id: package
+        shell: pwsh
+        env:
+          JOCKY_VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          pwsh packaging/windows/build_portable.ps1
+          # Inno Setup ships with the windows-latest image as iscc.
+          iscc flutter_client/packaging/windows/jocky-workstation.iss
+          if ($LASTEXITCODE -ne 0) { throw 'the installer failed to compile' }
+
+          $portable = Get-ChildItem 'build\windows\*.zip' | Select-Object -First 1
+          $installer = Get-ChildItem 'build\windows\installer\*.exe' | Select-Object -First 1
+          if (-not $portable)  { throw 'no portable archive was produced' }
+          if (-not $installer) { throw 'no installer was produced' }
+          if ($portable.Length -lt 20MB) {
+            throw "the portable archive is only $($portable.Length) bytes; it cannot be complete"
+          }
+
+          # The digest of what is about to be tested. The same value is checked
+          # against the published asset afterwards, so the file on the Releases
+          # page is provably the file that passed.
+          $hash = (Get-FileHash $portable.FullName -Algorithm SHA256).Hash.ToLower()
+          "portable=$($portable.FullName)"   | Out-File $env:GITHUB_OUTPUT -Append
+          "installer=$($installer.FullName)" | Out-File $env:GITHUB_OUTPUT -Append
+          "sha256=$hash"                     | Out-File $env:GITHUB_OUTPUT -Append
+          "bytes=$($portable.Length)"        | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "portable : $($portable.Name)  $($portable.Length) bytes"
+          Write-Host "installer: $($installer.Name)  $($installer.Length) bytes"
+          Write-Host "sha256   : $hash"
+
+      # --- Launch packaged application / Run smoke test ---------------------
+      # Against the unpacked artifact, not the build tree. A build that only
+      # proves `flutter build windows` succeeded proves nothing about whether
+      # the thing being shipped starts.
+      - name: Unpack the artifact that will be published
+        shell: pwsh
+        run: |
+          $staging = 'build\windows\verify-portable'
+          Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue
+          Expand-Archive '${{ steps.package.outputs.portable }}' -DestinationPath $staging
+          Write-Host "Unpacked $((Get-ChildItem $staging -Recurse -File).Count) files"
+
+      - name: Run the packaged runtime smoke test
+        run: pwsh packaging/windows/smoke_packaged.ps1 -Bundle build\windows\verify-portable
+
+      - name: Verify the installer installs and runs
+        shell: pwsh
+        run: |
+          # Silent install to a known directory, then the same smoke test
+          # against the installed copy: the installer and the archive are two
+          # different packagings and both are published.
+          $target = "$env:RUNNER_TEMP\jocky-installed"
+          $process = Start-Process -FilePath '${{ steps.package.outputs.installer }}' `
+              -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART',
+                              "/DIR=$target") -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "the installer exited with $($process.ExitCode)" }
+          Write-Host "Installed to $target"
+          pwsh packaging/windows/smoke_packaged.ps1 -Bundle $target
+          if ($LASTEXITCODE -ne 0) { throw 'the installed application failed its smoke test' }
+
+      # --- Upload workflow artifact -----------------------------------------
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-windows-portable
+          path: build/windows/*.zip
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-windows-installer
+          path: build/windows/installer/*.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------- publish --
+  publish:
+    # Only after the artifact that would be published has itself passed. A tag
+    # publishes; a manual run publishes only when asked.
+    if: >-
+      needs.windows.result == 'success'
+      && (github.ref_type == 'tag' || inputs.publish)
+    needs: [version, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      url: ${{ steps.release.outputs.url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Check the artifact is the one that was tested
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          portable="$(ls artifacts/*.zip | head -1)"
+          installer="$(ls artifacts/*.exe | head -1)"
+          [[ -s "$portable" ]] || { echo "::error::No portable archive to publish"; exit 1; }
+          [[ -s "$installer" ]] || { echo "::error::No installer to publish"; exit 1; }
+
+          actual="$(sha256sum "$portable" | cut -d' ' -f1)"
+          expected="${{ needs.windows.outputs.sha256 }}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::The artifact changed between testing and publication."
+            echo "::error::tested $expected, about to publish $actual"
+            exit 1
+          fi
+          echo "portable=$portable" >> "$GITHUB_OUTPUT"
+          echo "installer=$installer" >> "$GITHUB_OUTPUT"
+          echo "Publishing $(basename "$portable") — sha256 $actual, verified against the tested build"
+
+      # --- Create/update GitHub Release / Upload Windows release asset ------
+      # Adds to the release for this version rather than replacing it, so the
+      # Linux asset published by release.yml stays attached.
+      - name: Publish to the GitHub Release
+        id: release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: JOCKY ${{ needs.version.outputs.version }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.zip
+            artifacts/*.exe
+
+      # --- Download published asset / Verify published artifact -------------
+      - name: Download the published asset back
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p published
+          gh release download "${{ needs.version.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" --dir published --clobber \
+            --pattern '*windows-x64-portable.zip'
+
+          downloaded="$(ls published/*.zip | head -1)"
+          actual="$(sha256sum "$downloaded" | cut -d' ' -f1)"
+          expected="${{ needs.windows.outputs.sha256 }}"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::The published asset is not the artifact that was tested."
+            echo "::error::tested $expected, published $actual"
+            exit 1
+          fi
+          echo "The published asset is byte-identical to the tested build: $actual"
+
+          # Visible on the Releases page, not only under Actions -> Artifacts.
+          gh release view "${{ needs.version.outputs.tag }}" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,assets \
+            --jq 'if .isDraft then error("the release is still a draft") else . end
+                  | .assets | map(.name) | join(", ")'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jocky-windows-published-verification
+          path: published/*.zip
+          retention-days: 7
+
+  # ------------------------------------------------------- final smoke test --
+  # The published file, downloaded from the Releases page and run on a fresh
+  # runner. Everything before this tested a file on the machine that built it.
+  final:
+    if: needs.publish.result == 'success'
+    needs: [version, windows, publish]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the published Windows asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p released
+          gh release download "${{ needs.version.outputs.tag }}" \
+            --repo "$GITHUB_REPOSITORY" --dir released --clobber \
+            --pattern '*windows-x64-portable.zip'
+          ls -l released/
+
+      - name: Verify its digest against the tested build
+        shell: pwsh
+        run: |
+          $asset = Get-ChildItem 'released\*.zip' | Select-Object -First 1
+          $hash = (Get-FileHash $asset.FullName -Algorithm SHA256).Hash.ToLower()
+          $expected = '${{ needs.windows.outputs.sha256 }}'
+          if ($hash -ne $expected) {
+            throw "the published asset does not match the tested build: $hash vs $expected"
+          }
+          Write-Host "sha256 $hash — matches the artifact that passed"
+          Write-Host "size   $($asset.Length) bytes"
+
+      - name: Run the smoke test on the published artifact
+        shell: pwsh
+        run: |
+          Expand-Archive (Get-ChildItem 'released\*.zip' | Select-Object -First 1).FullName `
+              -DestinationPath 'released\unpacked'
+          pwsh packaging/windows/smoke_packaged.ps1 -Bundle released\unpacked
+
+      - name: What this run established
+        shell: pwsh
+        run: |
+          Write-Host '=============================================================================='
+          Write-Host "  JOCKY ${{ needs.version.outputs.version }} — Windows"
+          Write-Host '=============================================================================='
+          Write-Host ''
+          Write-Host '  WINDOWS APPLICATION BUILD:      VALIDATED'
+          Write-Host '  WINDOWS PACKAGED RUNTIME:       VALIDATED'
+          Write-Host '  WINDOWS GITHUB RELEASE:         PUBLISHED'
+          Write-Host '  WINDOWS FORENSIC HOST:          NOT YET VALIDATED'
+          Write-Host ''
+          Write-Host '  The published artifact was downloaded from the Releases page onto a'
+          Write-Host '  fresh runner, checked byte-for-byte against the build that passed, and'
+          Write-Host '  run again. What that establishes is that the application packages and'
+          Write-Host '  runs on Windows.'
+          Write-Host ''
+          Write-Host '  It does not establish that the Windows forensic collectors read what'
+          Write-Host '  they should on an investigated host. That needs a real Windows host and'
+          Write-Host '  has not happened. See docs/WindowsValidation.md.'
+          Write-Host ''
+          Write-Host "  Runner  : ${{ needs.windows.outputs.runner }}"
+          Write-Host "  Python  : ${{ needs.windows.outputs.python }}"
+          Write-Host "  Flutter : ${{ needs.windows.outputs.flutter }}"
+          Write-Host "  sha256  : ${{ needs.windows.outputs.sha256 }}"

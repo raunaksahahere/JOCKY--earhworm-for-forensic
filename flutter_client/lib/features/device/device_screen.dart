@@ -372,7 +372,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           const SizedBox(height: 4),
           const Text(
             'Each runs as its own step. A source that is unavailable on this machine becomes '
-            'a named gap in the report, not a failed collection.',
+            'a named gap in the report, not a failed collection. A source this platform has '
+            'no collector for is shown but cannot be selected; hover it for the reason.',
             style: TextStyle(fontSize: 12),
           ),
           const SizedBox(height: 8),
@@ -384,15 +385,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                 FilterChip(
                   key: Key('source-${source.source}'),
                   label: Text(source.source),
-                  tooltip: source.description,
+                  tooltip: source.supported
+                      ? source.description
+                      : source.unsupportedReason,
                   selected: _sources.contains(source.source),
-                  onSelected: (selected) => setState(() {
-                    if (selected) {
-                      _sources.add(source.source);
-                    } else {
-                      _sources.remove(source.source);
-                    }
-                  }),
+                  // A source this platform cannot collect is shown and
+                  // disabled rather than hidden: an investigator should be able
+                  // to see that JOCKY knows about it and cannot read it here,
+                  // which is different from JOCKY not having it at all.
+                  onSelected: source.supported
+                      ? (selected) => setState(() {
+                            if (selected) {
+                              _sources.add(source.source);
+                            } else {
+                              _sources.remove(source.source);
+                            }
+                          })
+                      : null,
                 ),
             ],
           ),

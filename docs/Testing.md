@@ -101,10 +101,27 @@ boundary where an investigator will read it — that a source is never
 overwritten, that no remote command is sent, that health means contact rather
 than uptime, that the audit trail is not evidence about the host.
 
+## Windows
+
+The suite runs on `windows-latest` in `.github/workflows/windows.yml`. Tests
+that exercise POSIX file mechanics rather than JOCKY's behaviour — mode bits,
+effective uid, birth time — skip themselves there with a stated reason, so the
+skip count is visible rather than hidden behind a deselection flag that could
+also swallow a real Windows failure.
+
+`packaging/windows/smoke_packaged.ps1` drives the **final packaged artifact**:
+the unpacked archive and, separately, the silently installed copy. It checks the
+bundle carries its own interpreter and every data file read at import time,
+starts the engine over the bootstrap channel, refuses an unauthenticated
+request, runs a read-only collection, renders the report, and shuts down
+cleanly.
+
 ## What is not tested
 
-**Windows.** The Windows collectors are fixture-tested. No Windows host has run
-them. Nothing in the suite validates Windows behaviour.
+**Windows forensic collection.** The build and the packaged runtime are
+validated; the collectors are not. `analysis/execution_windows.py` is
+fixture-tested against documented event formats, and no output has been compared
+with a real Windows host's telemetry. See `docs/WindowsValidation.md`.
 
 **Real memory images.** The workflow around an image — registration, hashing,
 re-verification before analysis, provenance, findings linkage — is fully tested.

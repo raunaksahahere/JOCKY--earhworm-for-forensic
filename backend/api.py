@@ -300,12 +300,31 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
 
     @app.get("/api/v1/collection-sources")
     def collection_sources():
+        """What can be collected, and what this platform cannot collect.
+
+        A source in the registry is not necessarily one this platform has an
+        adapter for. Offering it anyway would let an investigator select USB on
+        Windows, watch the collection succeed, and find no removable-media
+        evidence in the report -- a silent gap being the one thing a forensic
+        tool must not produce. So the platform's own answer travels with each
+        source, and the reason is the adapter's.
+        """
         from backend import plan_runner
-        return {"baseline": ["SYSTEM", "PROCESSES", "EXECUTION", "FILES"],
-                "selectable": [{"source": name,
-                                "description": plan_runner.SOURCE_DESCRIPTIONS[name],
-                                "needs_argument": name in plan_runner.NEEDS_ARGUMENT}
-                               for name in plan_runner.selectable_sources()]}
+        from compiler.plan import adapter_for
+        adapter = adapter_for()
+        return {"platform": adapter.name,
+                "platform_validated": getattr(adapter, "validated", True),
+                "baseline": list(plan_runner.BASELINE),
+                "selectable": [
+                    {"source": name,
+                     "description": plan_runner.SOURCE_DESCRIPTIONS[name],
+                     "needs_argument": name in plan_runner.NEEDS_ARGUMENT,
+                     "supported": name in adapter.supported,
+                     "unsupported_reason": (
+                         None if name in adapter.supported
+                         else adapter.unsupported_reasons.get(
+                             name, f"{adapter.name} has no collector for {name} in this build."))}
+                    for name in plan_runner.selectable_sources()]}
 
     @app.get("/api/v1/investigations/<case_id>/program")
     def investigation_program(case_id):

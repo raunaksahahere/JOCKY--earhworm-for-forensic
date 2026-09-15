@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from tests.conftest import requires_posix
+
 from analysis import execution_linux as linux
 from analysis.execution_history import collect_execution_history, collector_for, finalize
 from analysis.execution_model import (
@@ -140,6 +142,7 @@ def test_audit_log_records_execution_itself(window, tmp_path):
     assert "unparseable" in record["detail"]
 
 
+@requires_posix
 def test_audit_log_absent_and_unreadable_are_distinguished(window, tmp_path):
     missing, _ = linux.collect_audit_log(window, path=str(tmp_path / "nope.log"))
     assert missing["status"] == NOT_AVAILABLE

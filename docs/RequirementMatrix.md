@@ -316,11 +316,31 @@ in the file.
 
 ## Windows
 
-**WINDOWS READY / NOT VALIDATED**, without exception.
+Three separate claims, deliberately not blurred. See `docs/WindowsValidation.md`.
 
-The Windows collectors exist and are fixture-tested. The Windows adapter maps
-six sources. The packaging configuration exists. No Windows host has run any of
-it. Nothing in this project should be described as working on Windows.
+| Claim | Status |
+|-------|--------|
+| Windows application build | **VALIDATED** — `windows.yml` on `windows-latest` |
+| Windows packaged runtime | **VALIDATED** — the published artifact starts, serves its API and completes a read-only workflow |
+| Windows GitHub release | **PUBLISHED** — portable archive and installer are Release assets |
+| Windows forensic host collection | **NOT YET VALIDATED** |
+
+The application builds and the packaged artifact runs, verified against the file
+that is actually published: it is downloaded back from the Releases page, checked
+byte-for-byte against the build that passed, and run again on a fresh runner.
+
+**What remains unvalidated is the forensic part.** An executable that launches is
+not a validated forensic collector. `analysis/execution_windows.py` is
+fixture-tested against documented event formats, not against a host's real
+telemetry, and no output has been compared with a Windows machine. Four of the
+six selectable sources — `BROWSER`, `USB`, `DRIVERS`, `SERVICES` — have no
+Windows adapter entry at all; `GET /api/v1/collection-sources` reports that per
+source with the reason, and the client disables them rather than letting an
+investigator select one and find no evidence in the report.
+
+`WindowsAdapter.validated` is `False` and `describe_plan` prints `NOT VALIDATED
+ON A REAL HOST` on every Windows plan. Nothing in this project should be
+described as *forensically* working on Windows.
 
 ## Test coverage
 

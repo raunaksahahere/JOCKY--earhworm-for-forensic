@@ -3,6 +3,8 @@ import hashlib
 
 import pytest
 
+from tests.conftest import requires_posix
+
 from analysis import hashing, ledger
 
 
@@ -108,6 +110,7 @@ def test_unusable_ledger_not_reported_as_verified(evidence):
     assert path.read_text() == "corrupted"
 
 
+@requires_posix
 def test_creation_time_not_ctime_on_linux(evidence):
     result = hashing.hash_file(str(evidence))
     stat = evidence.stat()

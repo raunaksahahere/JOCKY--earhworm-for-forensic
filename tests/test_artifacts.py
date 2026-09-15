@@ -3,6 +3,8 @@ import os
 
 import pytest
 
+from tests.conftest import requires_posix
+
 from analysis import artifacts
 from analysis.artifacts import (
     COLLECTED, MISSING, NOT_A_FILE, PERMISSION_DENIED, SKIPPED_TOO_LARGE,
@@ -36,6 +38,7 @@ def test_missing_artifact_is_recorded_not_dropped(tmp_path):
     assert record["hash"] is None
 
 
+@requires_posix
 def test_unreadable_artifact_is_recorded_as_permission_denied(tmp_path):
     target = tmp_path / "secret.bin"
     target.write_bytes(b"x")

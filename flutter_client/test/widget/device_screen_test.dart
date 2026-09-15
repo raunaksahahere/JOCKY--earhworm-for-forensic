@@ -440,10 +440,20 @@ void _sourceSelection() {
     transport.respondJson('/api/v1/investigations', {'items': const []});
     transport.respondJson('/api/v1/collection-sources', {
       'baseline': const ['SYSTEM', 'PROCESSES', 'EXECUTION', 'FILES'],
+      'platform': 'linux',
+      'platform_validated': true,
       'selectable': const [
-        {'source': 'NETWORK', 'description': 'sockets', 'needs_argument': false},
-        {'source': 'BROWSER', 'description': 'history', 'needs_argument': false},
-        {'source': 'MEMORY', 'description': 'memory image', 'needs_argument': true},
+        {'source': 'NETWORK', 'description': 'sockets', 'needs_argument': false,
+         'supported': true, 'unsupported_reason': null},
+        {'source': 'BROWSER', 'description': 'history', 'needs_argument': false,
+         'supported': true, 'unsupported_reason': null},
+        {'source': 'MEMORY', 'description': 'memory image', 'needs_argument': true,
+         'supported': true, 'unsupported_reason': null},
+        // Present in the registry, no adapter on this platform. It must be
+        // visible and unselectable rather than hidden or silently useless.
+        {'source': 'USB', 'description': 'removable media', 'needs_argument': false,
+         'supported': false,
+         'unsupported_reason': 'windows has no collector for USB in this build.'},
       ],
     });
   });
@@ -461,6 +471,27 @@ void _sourceSelection() {
     expect(find.byKey(const Key('source-NETWORK')), findsOneWidget);
     expect(find.byKey(const Key('source-BROWSER')), findsOneWidget);
     expect(find.byKey(const Key('source-MEMORY')), findsOneWidget);
+  });
+
+  testWidgets('a source this platform cannot collect is shown but not selectable',
+      (tester) async {
+    await pump(tester);
+    final chip = tester.widget<FilterChip>(find.byKey(const Key('source-USB')));
+    expect(chip.onSelected, isNull,
+        reason: 'selecting it would succeed and collect nothing, which is a silent gap');
+    expect(chip.tooltip, contains('no collector for USB'));
+  });
+
+  testWidgets('a selectable source stays selectable', (tester) async {
+    await pump(tester);
+    final chip = tester.widget<FilterChip>(find.byKey(const Key('source-NETWORK')));
+    expect(chip.onSelected, isNotNull);
+    expect(chip.tooltip, 'sockets');
+  });
+
+  testWidgets('the form explains why a source cannot be chosen', (tester) async {
+    await pump(tester);
+    expect(find.textContaining('hover it for the reason'), findsOneWidget);
   });
 
   testWidgets('an unavailable source is described as a gap, not a failure', (tester) async {

@@ -216,20 +216,34 @@ class AuditEntry {
 }
 
 /// A source an investigator may add to a collection.
+///
+/// `supported` is the platform's own answer, not the registry's. A source this
+/// platform has no adapter for must not be offered as though selecting it would
+/// collect something: the collection would succeed and the evidence would
+/// simply be absent, which is the one kind of gap a forensic tool must never
+/// produce silently.
 class CollectionSource {
   const CollectionSource({
     required this.source,
     required this.description,
     required this.needsArgument,
+    this.supported = true,
+    this.unsupportedReason,
   });
 
   factory CollectionSource.fromJson(Map<String, dynamic> json) => CollectionSource(
         source: asString(json['source']),
         description: asString(json['description']),
         needsArgument: json['needs_argument'] == true,
+        // Absent means supported: an older engine that does not report this
+        // could only have offered sources it could collect.
+        supported: json['supported'] != false,
+        unsupportedReason: asStringOrNull(json['unsupported_reason']),
       );
 
   final String source;
   final String description;
   final bool needsArgument;
+  final bool supported;
+  final String? unsupportedReason;
 }

@@ -22,6 +22,12 @@ def start(command, workspace):
     raise RuntimeError('No readiness record')
 
 
+#: The plan names these by source; the collector records them under its own
+#: action name, so they are matched separately rather than by string equality.
+BASELINE_ACTIONS = {'SYSTEM': 'SYSTEM INFO', 'PROCESSES': 'PROCESSES',
+                    'EXECUTION': 'EXECUTION HISTORY', 'FILES': 'ARTIFACTS'}
+
+
 def page_count(pdf):
     """Pages in a rendered document.
 
@@ -79,11 +85,26 @@ def smoke(command, workspace):
         # checks for.
         evidence = {row['type'] for row in request(
             session, f"/api/v1/investigations/{case['id']}/evidence")['items']}
-        missing = {'NETWORK','USB','DRIVERS','SERVICES'} - evidence
-        assert not missing, f"selected sources produced no evidence record: {sorted(missing)}"
-        # The investigation program is what makes the run reproducible.
+        # The investigation program is what makes the run reproducible, and its
+        # plan is what says which sources this platform can actually collect.
         programs = request(session, f"/api/v1/investigations/{case['id']}/program")['items']
-        assert programs and programs[0]['plan']['platform'] == 'linux', programs
+        assert programs, 'no investigation program was recorded'
+        plan = programs[0]['plan']
+        assert plan['platform'] in ('linux', 'windows'), plan['platform']
+
+        # Every source the plan marked READY must have produced an evidence
+        # record. Derived from the plan rather than hardcoded, because the same
+        # request compiles to different plans per platform -- which is the point
+        # of having an IR, and a hardcoded list would fail on Windows for the
+        # wrong reason.
+        expected = {task['source'] for task in plan['tasks'] if task['status'] == 'READY'}
+        missing = {source for source in expected
+                   if source not in evidence and source not in BASELINE_ACTIONS}
+        assert not missing, f"sources the plan promised produced no evidence: {sorted(missing)}"
+        for skipped in plan['unsupported']:
+            assert skipped['detail'], 'an unsupported source must say why'
+        print(f"plan: {len(expected)} ready, {len(plan['unsupported'])} unsupported on "
+              f"{plan['platform']}", file=sys.stderr)
         # Historical execution evidence, artifacts, findings and the merged
         # timeline must be produced by the frozen engine, not only by source.
         history = request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']
@@ -139,8 +160,16 @@ def smoke(command, workspace):
         assert all(source['status'] in ('AVAILABLE','NOT_AVAILABLE','NOT_ENABLED','PERMISSION_DENIED')
                    for source in sources), sources
         assert all(event['classification'] == 'HISTORICAL_EVIDENCE' for event in history)
-        assert findings, 'an investigation with evidence must not end with zero findings'
-        telemetry = stored['historical_execution']['telemetry_available']
+        if telemetry_available := stored['historical_execution']['telemetry_available']:
+            assert findings, 'an investigation with telemetry must not end with zero findings'
+        elif not findings:
+            # A machine with no readable execution telemetry has nothing to find,
+            # and saying so is correct. The limitations must still be recorded.
+            assert stored['limitations'], (
+                'no findings and no stated limitation: the report explains neither')
+            print('no telemetry on this host; zero findings is the honest result',
+                  file=sys.stderr)
+        telemetry = telemetry_available
         stop(process, session)
         process, session = start(command, workspace)
         saved = request(session, '/api/v1/investigations/'+case['id'])

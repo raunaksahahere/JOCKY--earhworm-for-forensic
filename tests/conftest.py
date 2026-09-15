@@ -1,6 +1,17 @@
+import os
+
 import pytest
 
 from analysis import ledger
+
+#: Tests that exercise POSIX mechanics rather than JOCKY's own behaviour: mode
+#: bits, effective uid, birth time. They are not Windows gaps -- the behaviour
+#: they check has a different shape there, and asserting the POSIX shape on
+#: Windows would be asserting the wrong thing rather than finding a bug.
+requires_posix = pytest.mark.skipif(
+    os.name != "posix",
+    reason="exercises POSIX file mechanics; the Windows equivalent is ACL-based and is a "
+           "separate question this build has not answered")
 
 
 @pytest.fixture(autouse=True)

@@ -1,8 +1,9 @@
-# Release artifacts for both targets, built on native runners.
+# Linux release artifacts, built on a native runner.
 #
 # PyInstaller freezes for the OS it runs on and Flutter desktop builds are
-# native, so neither target can be cross-built: Linux artifacts come from
-# ubuntu-latest and Windows artifacts from windows-latest.
+# native, so neither target can be cross-built. Windows is built, validated and
+# published by .github/workflows/windows.yml; both attach their assets to the
+# release for the same tag.
 #
 # Never triggered by an ordinary push. Run it from the Actions tab, or push a
 # v* tag to build and publish a release.
@@ -16,10 +17,10 @@ on:
         required: true
         default: '0.8.1'
       targets:
-        description: 'Which platforms to build'
+        description: 'Which platforms to build (Windows lives in windows.yml)'
         type: choice
-        options: [linux, windows, both]
-        default: both
+        options: [linux]
+        default: linux
       publish:
         description: 'Create a GitHub Release with the artifacts'
         type: boolean
@@ -57,7 +58,7 @@ jobs:
   linux:
     # A tag builds everything; a manual run builds only what was asked for, so
     # one platform can ship while the other is still being brought up.
-    if: github.event_name != 'workflow_dispatch' || contains(fromJSON('["linux","both"]'), inputs.targets)
+    if: github.event_name != 'workflow_dispatch' || inputs.targets == 'linux'
     needs: version
     runs-on: ubuntu-latest
     steps:
@@ -134,87 +135,19 @@ jobs:
           path: build/deb/*.deb
           if-no-files-found: error
 
-  windows:
-    # Only when someone asks for it. A tag builds Linux alone, because no
-    # Windows host has validated any of this and publishing an installer that
-    # nobody has run would contradict every claim in docs/RequirementMatrix.md.
-    # Build it deliberately, from the Actions tab, to see where Windows stands.
-    if: github.event_name == 'workflow_dispatch' && contains(fromJSON('["windows","both"]'), inputs.targets)
-    needs: version
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r requirements-dev.txt
-
-      - name: Backend tests
-        run: python -m pytest -q
-
-      - name: Freeze the engine
-        run: python scripts/build_backend.py
-
-      - name: Engine integration smoke test
-        run: python scripts/smoke_backend.py --executable backend-dist/JOCKY-backend/JOCKY-backend.exe
-
-      # Runs flutter pub get, analyze, test, the release build, and verifies the
-      # engine is inside the bundle.
-      - name: Build the release bundle
-        run: pwsh packaging/windows/build.ps1
-
-      - name: Verify the bundle starts its own engine
-        working-directory: flutter_client
-        run: flutter test test/integration/packaged_engine_test.dart
-        env:
-          JOCKY_TEST_BUNDLE: build/windows/x64/runner/Release
-
-      - name: Build the portable archive
-        env:
-          JOCKY_VERSION: ${{ needs.version.outputs.version }}
-        run: pwsh packaging/windows/build_portable.ps1
-
-      # Inno Setup ships with the windows-latest image as iscc.
-      - name: Build the installer
-        env:
-          JOCKY_VERSION: ${{ needs.version.outputs.version }}
-        run: iscc flutter_client/packaging/windows/jocky-workstation.iss
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jocky-windows-installer
-          path: build/windows/installer/*.exe
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: jocky-windows-portable
-          path: build/windows/*.zip
-          if-no-files-found: error
-
   publish:
     # Only for a v* tag, or an explicit request. Building never publishes.
     #
-    # A skipped platform is not a failure: a tag builds and publishes Linux
-    # alone. A platform that was asked for and failed blocks the release, so a
-    # half-built release is never tagged as complete.
+    # This workflow owns the Linux asset. Windows is built, validated and
+    # published by windows.yml, which attaches its assets to the same release
+    # for the same tag: two workflows producing the same artifact would race,
+    # and Windows takes three times as long, so keeping them separate lets the
+    # Linux release land while Windows is still packaging.
     if: >-
       !cancelled()
       && (github.ref_type == 'tag' || inputs.publish)
-      && needs.linux.result != 'failure' && needs.linux.result != 'cancelled'
-      && needs.windows.result != 'failure' && needs.windows.result != 'cancelled'
-      && (needs.linux.result == 'success' || needs.windows.result == 'success')
-    needs: [version, linux, windows]
+      && needs.linux.result == 'success'
+    needs: [version, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -235,5 +168,3 @@ jobs:
           fail_on_unmatched_files: false
           files: |
             artifacts/*.deb
-            artifacts/*.exe
-            artifacts/*.zip

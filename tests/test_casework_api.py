@@ -174,3 +174,40 @@ def test_there_is_no_route_that_runs_a_command_on_an_endpoint(client):
     assert endpoint_rules
     for rule in endpoint_rules:
         assert not any(word in rule for word in ("command", "exec", "shell", "run", "script"))
+
+
+def test_the_source_list_says_what_this_platform_cannot_collect(client):
+    """A silently skipped source is the one thing a forensic tool must not do.
+
+    USB is in the registry but has no Windows adapter entry. Offering it there
+    without saying so would let an investigator select it, watch the collection
+    succeed, and find no removable-media evidence in the report.
+    """
+    from compiler.plan import adapter_for
+
+    payload = client.get("/api/v1/collection-sources", headers=HEADERS).get_json()
+    adapter = adapter_for()
+    assert payload["platform"] == adapter.name
+    for entry in payload["selectable"]:
+        supported = entry["source"] in adapter.supported
+        assert entry["supported"] is supported
+        if not supported:
+            assert entry["unsupported_reason"], (
+                f"{entry['source']} is unsupported here and does not say why")
+        else:
+            assert entry["unsupported_reason"] is None
+
+
+def test_every_windows_unsupported_source_states_a_reason():
+    """Checked for both platforms from either, since a Linux run must still
+    guarantee the Windows client will not offer a source it cannot collect."""
+    from backend import plan_runner
+    from compiler.plan import adapter_for
+
+    for name in ("linux", "windows"):
+        adapter = adapter_for(name)
+        for source in plan_runner.selectable_sources():
+            if source not in adapter.supported:
+                reason = adapter.unsupported_reasons.get(
+                    source, f"{adapter.name} has no collector for {source} in this build.")
+                assert reason, f"{name} cannot collect {source} and gives no reason"

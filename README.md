@@ -49,8 +49,11 @@ modify drivers, or expose a remote shell. An enrolled endpoint receives a
 forensic collection request naming a source — never a command. See
 [docs/SecurityBoundaries.md](docs/SecurityBoundaries.md).
 
-**Windows is not validated.** The Windows collectors and packaging exist and are
-fixture-tested; no Windows host has run any of it.
+**Windows: the application is validated, the forensics are not.** The build and
+the packaged runtime are checked on a Windows runner and the release is
+published, but the Windows collectors are fixture-tested only — no host's real
+telemetry has been compared against them. An executable that launches is not a
+validated forensic collector. See [docs/WindowsValidation.md](docs/WindowsValidation.md).
 
 ## Try it
 
@@ -80,6 +83,7 @@ about a minute. See [docs/Demo.md](docs/Demo.md).
 | [Testing](docs/Testing.md) | The suites and what they guard |
 | [Rules](docs/Rules.md) | The constraints this is built under |
 | [Tracker](docs/Tracker.md) | What is done, what is open, what broke |
+| [Windows validation](docs/WindowsValidation.md) | What is validated on Windows, and what is not |
 
 ## Product source
 

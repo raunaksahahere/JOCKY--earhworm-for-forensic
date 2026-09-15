@@ -73,7 +73,15 @@ void main() {
 
     expect(locator.resolve(), isNull);
     final description = locator.describeSearch();
-    expect(description, contains('${empty.path}/backend/jocky-backend (missing)'));
+    // Built the way the locator builds it: the separator and the engine name
+    // both differ on Windows, and hardcoding the POSIX spelling would assert
+    // the wrong thing there rather than find a bug.
+    final expected = [
+      empty.path,
+      'backend',
+      Platform.isWindows ? 'JOCKY-backend.exe' : 'jocky-backend',
+    ].join(Platform.pathSeparator);
+    expect(description, contains('$expected (missing)'));
     expect(description, contains('backend-dist'),
         reason: 'the developer layout is searched by walking up, not by a fixed ascent');
   });
