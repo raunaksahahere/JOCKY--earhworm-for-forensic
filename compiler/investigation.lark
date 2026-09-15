@@ -1,10 +1,10 @@
-// JOCKY investigation program grammar.
+// The JOCKY investigation language.
 //
 // A program states investigation INTENT: which case, which endpoints, what to
-// collect, how to correlate it and what to report. It deliberately has no way
-// to express an arbitrary command, a path to execute, or anything a platform
-// adapter could turn into a shell. Everything here compiles to a bounded,
-// read-only collection plan.
+// collect, under what conditions, how to correlate it and what to report. It
+// deliberately has no way to express an arbitrary command, a path to execute,
+// or anything a platform adapter could turn into a shell. Every program
+// compiles to a bounded, read-only collection plan.
 //
 // Statements are newline-terminated. Without that, a bare word argument would
 // happily swallow the keyword starting the next statement.
@@ -15,52 +15,128 @@ program: _NL* (statement _NL*)+
           | target_stmt
           | window_stmt
           | let_stmt
+          | define_stmt
+          | run_stmt
+          | when_stmt
           | collect_stmt
           | filter_stmt
           | correlate_stmt
           | timeline_stmt
           | report_stmt
 
-case_stmt: "CASE"i STRING case_block?
+// --- the case -------------------------------------------------------------
+case_stmt: CASE STRING case_block?
 case_block: "{" _NL* (case_field _NL*)+ "}"
 case_field: CASE_KEY STRING
-CASE_KEY: "TITLE"i | "EXAMINER"i | "REFERENCE"i | "NOTES"i
+CASE_KEY.4: "TITLE"i | "EXAMINER"i | "REFERENCE"i | "NOTES"i
 
-target_stmt: "TARGET"i STRING platform_clause?
-platform_clause: "PLATFORM"i PLATFORM
-PLATFORM.2: "linux"i | "windows"i | "any"i
+target_stmt: TARGET STRING platform_clause?
+platform_clause: PLATFORM_KW PLATFORM
+PLATFORM.4: "linux"i | "windows"i | "any"i
 
-window_stmt: "WINDOW"i "LAST"i NUMBER UNIT
-UNIT.2: "HOURS"i | "DAYS"i
+window_stmt: WINDOW LAST NUMBER UNIT
+UNIT.4: "HOURS"i | "DAYS"i
 
-let_stmt: "LET"i NAME "=" value
+// --- bindings and reuse ---------------------------------------------------
+let_stmt: LET NAME "=" value
 
-collect_stmt: "COLLECT"i SOURCE collect_arg* collect_option*
-SOURCE.3: "SYSTEM"i | "PROCESSES"i | "EXECUTION"i | "NETWORK"i | "BROWSER"i
+// A named, reusable investigation step. This is what lets one program say
+// "run the standard triage here" rather than repeating six collections, and
+// what lets a team keep a playbook under version control and cite it by name
+// in a report.
+define_stmt: DEFINE NAME playbook_block
+playbook_block: "{" _NL* (playbook_statement _NL*)* "}"
+?playbook_statement: collect_stmt
+                   | filter_stmt
+                   | correlate_stmt
+                   | run_stmt
+                   | when_stmt
+
+run_stmt: RUN NAME
+
+// Conditional composition. The guard is resolved when a plan is built for one
+// platform, never at parse time: the IR stays platform-neutral and carries the
+// condition, so one program yields a different plan per platform and each plan
+// says which parts it left out and why.
+when_stmt: WHEN guard playbook_block
+?guard: platform_guard | source_guard
+platform_guard: PLATFORM_KW IS PLATFORM
+source_guard: SOURCE_KW SOURCE IS SUPPORTED
+
+// --- collection -----------------------------------------------------------
+collect_stmt: COLLECT SOURCE collect_arg* collect_option*
+SOURCE.5: "SYSTEM"i | "PROCESSES"i | "EXECUTION"i | "NETWORK"i | "BROWSER"i
         | "USB"i | "DRIVERS"i | "FILES"i | "MEMORY"i | "SERVICES"i | "LOGS"i
 collect_arg: value
 collect_option: OPTION_KEY value
-OPTION_KEY.3: "LIMIT"i | "FROM"i | "DEPTH"i
+OPTION_KEY.5: "LIMIT"i | "FROM"i | "DEPTH"i
 
-filter_stmt: "FILTER"i FIELD OPERATOR value
-FIELD.3: "PATH"i | "COMMAND"i | "USER"i | "HOST"i | "SOURCE"i | "HASH"i
-OPERATOR.3: "CONTAINS"i | "EQUALS"i | "MATCHES"i | "STARTS"i
+// --- predicates -----------------------------------------------------------
+// A filter is a boolean expression, not a single comparison. Investigations ask
+// compound questions -- "a curl command, run by root, that is not the package
+// manager" -- and a language that cannot say AND forces that into three
+// separate statements whose relationship to each other is lost.
+filter_stmt: FILTER predicate
+?predicate: or_expr
+?or_expr: and_expr (OR and_expr)*
+?and_expr: not_expr (AND not_expr)*
+?not_expr: NOT not_expr -> negation
+         | atom
+?atom: comparison
+     | "(" predicate ")"
+comparison: FIELD OPERATOR value
+FIELD.5: "PATH"i | "COMMAND"i | "USER"i | "HOST"i | "SOURCE"i | "HASH"i
+       | "PROCESS"i | "URL"i | "ADDRESS"i | "ENDPOINT"i
+OPERATOR.5: "CONTAINS"i | "EQUALS"i | "MATCHES"i | "STARTS"i | "ENDS"i | "ONEOF"i
 
-correlate_stmt: "CORRELATE"i SUBJECT "WITH"i SUBJECT
-SUBJECT.3: "ARTIFACTS"i | "EXECUTION"i | "BROWSER"i | "USB"i | "NETWORK"i
-         | "MEMORY"i | "DRIVERS"i
+// --- analysis and output --------------------------------------------------
+correlate_stmt: CORRELATE SUBJECT WITH SUBJECT
+SUBJECT.5: "ARTIFACTS"i | "EXECUTION"i | "BROWSER"i | "USB"i | "NETWORK"i
+         | "MEMORY"i | "DRIVERS"i | "PROCESSES"i
 
-timeline_stmt: "TIMELINE"i TIMELINE_KIND timeline_option*
-TIMELINE_KIND.3: "SIGNIFICANT"i | "FULL"i
-timeline_option: "LIMIT"i NUMBER
+timeline_stmt: TIMELINE TIMELINE_KIND timeline_option*
+TIMELINE_KIND.5: "SIGNIFICANT"i | "FULL"i
+timeline_option: LIMIT_KW NUMBER
 
-report_stmt: "REPORT"i REPORT_KIND
-REPORT_KIND.3: "SUMMARY"i | "EVIDENCE"i | "BOTH"i
+report_stmt: REPORT REPORT_KIND output_name?
+REPORT_KIND.5: "SUMMARY"i | "EVIDENCE"i | "BOTH"i
+output_name: AS STRING
 
+// --- values ---------------------------------------------------------------
 ?value: STRING -> string_value
       | NUMBER -> number_value
       | VARIABLE -> variable_value
+      | list_value
       | NAME -> name_value
+list_value: "[" _NL* value (_NL* "," _NL* value)* _NL* "]"
+
+// --- keywords -------------------------------------------------------------
+// Declared rather than left anonymous so none of them can be swallowed by NAME,
+// which matches any bare word. Priorities keep a keyword a keyword even where a
+// value could legally appear.
+CASE.6: "CASE"i
+TARGET.6: "TARGET"i
+WINDOW.6: "WINDOW"i
+LAST.6: "LAST"i
+LET.6: "LET"i
+DEFINE.6: "DEFINE"i
+RUN.6: "RUN"i
+WHEN.6: "WHEN"i
+IS.6: "IS"i
+SUPPORTED.6: "SUPPORTED"i
+SOURCE_KW.6: "SOURCE"i
+PLATFORM_KW.6: "PLATFORM"i
+COLLECT.6: "COLLECT"i
+FILTER.6: "FILTER"i
+CORRELATE.6: "CORRELATE"i
+WITH.6: "WITH"i
+TIMELINE.6: "TIMELINE"i
+LIMIT_KW.6: "LIMIT"i
+REPORT.6: "REPORT"i
+AS.6: "AS"i
+AND.6: "AND"i
+OR.6: "OR"i
+NOT.6: "NOT"i
 
 VARIABLE: /\$[A-Za-z_][A-Za-z0-9_]*/
 NAME: /[A-Za-z_][A-Za-z0-9_.\/-]*/

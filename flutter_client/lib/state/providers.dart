@@ -9,6 +9,7 @@ import '../models/casework/casework_models.dart';
 import '../models/settings/workstation_settings.dart';
 import '../repositories/backend_repository.dart';
 import '../repositories/casework_repository.dart';
+import '../repositories/language_repository.dart';
 import '../repositories/command_repository.dart';
 import '../repositories/records_repository.dart';
 import '../services/api/jocky_api_client.dart';
@@ -100,6 +101,11 @@ final recordsRepositoryProvider =
 
 final caseworkRepositoryProvider =
     Provider<CaseworkRepository>((ref) => CaseworkRepository(ref.watch(apiClientProvider)));
+
+/// The JOCKY language. Compilation is the engine's, never the client's, so the
+/// editor and a collection cannot disagree about what a program means.
+final languageRepositoryProvider =
+    Provider<LanguageRepository>((ref) => LanguageRepository(ref.watch(apiClientProvider)));
 
 /// The case file's four listings. Each is a separate future so one that fails
 /// — an engine that is still starting, say — does not blank the others.

@@ -47,18 +47,41 @@ from compiler.plan import build_plan, describe_plan  # noqa: E402
 from endpoint.agent import Agent, ControlPlaneClient  # noqa: E402
 from scenarios import SCENARIOS, run_scenario  # noqa: E402
 
-PROGRAM = '''CASE "Suspected data staging on the lab workstation"
+PROGRAM = '''CASE "Suspected data staging on the lab workstation" {
+    TITLE "Unexplained archive activity reported by the lab owner"
+    EXAMINER "JOCKY demonstration"
+}
 TARGET "localhost"
 WINDOW LAST 24 HOURS
-COLLECT PROCESSES
-COLLECT EXECUTION
-COLLECT NETWORK
-COLLECT USB
-COLLECT DRIVERS
+
+# Named once, so the program reads as the question rather than as a list.
+LET download_tools = ["/usr/bin/curl", "/usr/bin/wget"]
+
+# A playbook: the evidence every host must yield for results to be comparable.
+DEFINE host_triage {
+    COLLECT PROCESSES
+    COLLECT EXECUTION
+    COLLECT NETWORK
+}
+
+RUN host_triage
+
+# Removable media and loaded kernel modules are Linux-only in this build. The
+# guard travels into the IR and is resolved by the platform adapter, so on
+# Windows these become named skips rather than silent omissions.
+WHEN PLATFORM IS linux {
+    COLLECT USB
+    COLLECT DRIVERS
+    CORRELATE EXECUTION WITH USB
+}
+
 COLLECT BROWSER
-CORRELATE EXECUTION WITH USB
+COLLECT SERVICES
+
+FILTER PATH ONEOF $download_tools OR COMMAND CONTAINS "curl"
+
 TIMELINE FULL
-REPORT SUMMARY
+REPORT SUMMARY AS "lab-workstation-summary"
 '''
 
 STEP = 0
@@ -145,7 +168,7 @@ def main(argv=None):
         print(f"  window    {ast['window']}")
         print(f"  collect   {', '.join(item['source'] for item in ast['collections'])}")
         print(f"  correlate {len(ast['correlations'])}   timeline {bool(ast['timeline'])}   "
-              f"report {', '.join(ast['reports'])}")
+              f"report {', '.join(report['kind'] for report in ast['reports'])}")
 
         step("Compile the AST to platform-neutral IR")
         ir = compile_program(PROGRAM)
@@ -203,9 +226,11 @@ def main(argv=None):
         step("Run the same program against this workstation")
         investigation = call("post", "/api/v1/investigations", {
             "title": "Local collection for the demo case", "case_id": case["id"]}).get_json()
+        # Driven by the program itself, not by a list of ticked sources. The UI
+        # path compiles its selection into exactly this shape, so both routes
+        # reach the engine through the same compiler.
         call("post", f"/api/v1/investigations/{investigation['id']}/collect",
-             {"paths": [], "window_hours": 24,
-              "sources": ["NETWORK", "USB", "DRIVERS", "SERVICES", "BROWSER"]})
+             {"paths": [], "window_hours": 24, "program": PROGRAM})
         for _ in range(900):
             investigation = call("get", f"/api/v1/investigations/{investigation['id']}").get_json()
             if investigation["status"] in ("completed", "partially_completed", "failed", "cancelled"):
@@ -242,6 +267,24 @@ def main(argv=None):
         for limitation in payload.get("limitations", [])[:3]:
             text = limitation if isinstance(limitation, str) else limitation.get("detail", "")
             print(f"    - {text[:88]}")
+
+        # ------------------------------------------------------------------
+        step("Answer the program's FILTER against the collected evidence")
+        selection = call(
+            "get", f"/api/v1/investigations/{investigation['id']}/selection").get_json()
+        for line in selection.get("filters", []):
+            print(f"  filter    {line}")
+        if selection.get("applied"):
+            print(f"  selected  {selection['total']} record(s) "
+                  f"({', '.join(f'{kind} {count}' for kind, count in
+                                sorted(selection['counts'].items())) or 'none'})")
+            for result in selection["results"][:5]:
+                print(f"    {result['kind']:18s} {str(result['id'] or '-'):12s} "
+                      f"{str(result['label'])[:44]}")
+            if not selection["results"]:
+                print("    Nothing on this host answers that question. The evidence is still")
+                print("    complete and hashed; the selection is empty, not missing.")
+        print(f"\n  {selection.get('note', '')}")
 
         step("Correlate across hosts")
         fleet = correlate_fleet(tasks, endpoints=endpoints)
@@ -281,7 +324,7 @@ def main(argv=None):
         print(f"  full report          {page_count(full)} pages "
               f"(the same evidence, every appendix appended)")
         (output / "report.json").write_text(json.dumps(payload, indent=2, default=str))
-        (output / "program.jocky").write_text(PROGRAM)
+        (output / "program.x").write_text(PROGRAM)
         (output / "ir.json").write_text(json.dumps(ir, indent=2))
         (output / "execution-plan.json").write_text(json.dumps(plan, indent=2))
         (output / "endpoint-tasks.json").write_text(json.dumps(tasks, indent=2, default=str))

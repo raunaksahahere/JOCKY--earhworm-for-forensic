@@ -7,6 +7,8 @@ enum JockyDestination {
   overview('/', 'Overview', Icons.dashboard_outlined, 'Engine, case and recent activity'),
   commandCenter('/command-center', 'Command Center', Icons.terminal_outlined,
       'Submit commands to the engine'),
+  language('/language', 'JOCKY Language', Icons.code_outlined,
+      'Write, compile and run a .x investigation'),
   investigations('/investigations', 'Investigations', Icons.folder_open_outlined,
       'Collections, their evidence and timelines'),
   caseFile('/case-file', 'Case File', Icons.inventory_2_outlined,

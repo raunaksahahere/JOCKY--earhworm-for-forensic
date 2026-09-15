@@ -15,13 +15,19 @@ from __future__ import annotations
 
 import platform as platform_module
 
-from .investigation import ProgramError, validate_ir
+from .investigation import ProgramError, describe_condition, validate_ir
 
-PLAN_VERSION = 1
+#: 2 resolves the WHEN conditions the IR carries, so a plan can skip a step
+#: because a guard did not hold rather than because a collector is missing.
+PLAN_VERSION = 2
 
 UNSUPPORTED = "UNSUPPORTED"
 REQUIRES_ARGUMENT = "REQUIRES_ARGUMENT"
 READY = "READY"
+#: A step the program guarded with WHEN, on a platform where the guard is false.
+#: Distinct from UNSUPPORTED: the build could have collected this, and the
+#: program chose not to here.
+SKIPPED_CONDITION = "SKIPPED_CONDITION"
 
 
 class PlatformAdapter:
@@ -35,8 +41,32 @@ class PlatformAdapter:
     #: learn where that evidence does come from, if it comes from anywhere.
     unsupported_reasons: dict = {}
 
+    def holds(self, condition: dict) -> bool:
+        """Is one WHEN guard true on this platform?
+
+        Resolved here rather than in the parser, so the IR stays neutral and the
+        same program answers differently on each platform.
+        """
+        if condition["kind"] == "platform_is":
+            return condition["platform"] in ("any", self.name)
+        if condition["kind"] == "source_supported":
+            return condition["source"] in self.supported
+        raise ProgramError(f"Unknown condition {condition['kind']}")
+
+    def unmet(self, conditions) -> list:
+        return [condition for condition in conditions or [] if not self.holds(condition)]
+
     def task_for(self, collection: dict) -> dict:
         source = collection["source"]
+        unmet = self.unmet(collection.get("conditions"))
+        if unmet:
+            return {
+                "collection_id": collection["id"], "source": source,
+                "status": SKIPPED_CONDITION,
+                "detail": ("The program guarded this collection with "
+                           + " AND ".join(describe_condition(item) for item in unmet)
+                           + f", which is not true on {self.name}."),
+            }
         if source not in self.supported:
             return {
                 "collection_id": collection["id"], "source": source, "status": UNSUPPORTED,
@@ -132,6 +162,14 @@ def build_plan(ir: dict, *, platform_name: str | None = None) -> dict:
     tasks = [adapter.task_for(collection) for collection in ir["collections"]]
     ready = [task for task in tasks if task["status"] == READY]
     unsupported = [task for task in tasks if task["status"] == UNSUPPORTED]
+    conditional = [task for task in tasks if task["status"] == SKIPPED_CONDITION]
+
+    # A guarded filter or correlation is resolved the same way its collection
+    # is, so a plan never carries analysis for a step it is not going to run.
+    filters = [clause for clause in ir["filters"]
+               if not adapter.unmet(clause.get("conditions"))]
+    correlations = [correlation for correlation in ir["correlations"]
+                    if not adapter.unmet(correlation.get("conditions"))]
 
     return {
         "plan_version": PLAN_VERSION,
@@ -146,8 +184,11 @@ def build_plan(ir: dict, *, platform_name: str | None = None) -> dict:
         "unsupported": [
             {"collection_id": task["collection_id"], "source": task["source"],
              "detail": task["detail"]} for task in unsupported],
-        "filters": ir["filters"],
-        "correlations": ir["correlations"],
+        "conditional_skips": [
+            {"collection_id": task["collection_id"], "source": task["source"],
+             "detail": task["detail"]} for task in conditional],
+        "filters": filters,
+        "correlations": correlations,
         "timeline": ir["timeline"],
         "reports": ir["reports"],
         "capabilities_required": sorted({task["capability"] for task in ready}),

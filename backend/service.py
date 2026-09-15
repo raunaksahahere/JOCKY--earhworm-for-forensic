@@ -578,6 +578,25 @@ class Workstation:
     def search(self, case_id, term, *, kinds=None):
         return search_investigation(self._latest_report(case_id), term, kinds=kinds)
 
+    def selection(self, case_id):
+        """What this investigation's own program selected from what it collected.
+
+        The filters come from the stored IR rather than from the request, so a
+        selection is reproducible from the record: the same program against the
+        same evidence selects the same records, and both are in the package.
+        """
+        from analysis.selection import select_for_program
+
+        rows = self.store.rows(
+            "SELECT ir FROM investigation_programs WHERE investigation_id=? "
+            "ORDER BY created_at DESC LIMIT 1", (case_id,))
+        if not rows or not rows[0].get("ir"):
+            return {"applied": False, "filters": [], "results": [], "counts": {}, "total": 0,
+                    "note": "No investigation program is recorded against this case."}
+        ir = json.loads(rows[0]["ir"])
+        return {**select_for_program(self._latest_report(case_id), ir.get("filters") or []),
+                "case_id": case_id}
+
     # --- investigator assessments -------------------------------------------
     ASSESSMENTS = {"ACCEPT_AS_ROUTINE", "KEEP_FOR_REVIEW", "MARK_AS_RELEVANT"}
 

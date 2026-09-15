@@ -8,6 +8,7 @@ import '../features/casefile/case_file_screen.dart';
 import '../features/command_center/command_center_screen.dart';
 import '../features/history/history_screen.dart';
 import '../features/investigations/investigation_detail_screen.dart';
+import '../features/language/language_screen.dart';
 import '../features/investigations/investigations_screen.dart';
 import '../features/overview/overview_screen.dart';
 import '../features/reports/report_detail_screen.dart';
@@ -35,6 +36,10 @@ GoRouter buildRouter({String initialLocation = '/'}) {
           GoRoute(
             path: JockyDestination.commandCenter.path,
             pageBuilder: (context, state) => _page(state, const CommandCenterScreen()),
+          ),
+          GoRoute(
+            path: JockyDestination.language.path,
+            pageBuilder: (context, state) => _page(state, const LanguageScreen()),
           ),
           GoRoute(
             path: JockyDestination.investigations.path,

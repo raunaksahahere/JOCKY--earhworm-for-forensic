@@ -528,6 +528,12 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
         return service.search(case_id, request.args.get("q", ""),
                               kinds=kinds.split(",") if kinds else None)
 
+    @app.get("/api/v1/investigations/<case_id>/selection")
+    def investigation_selection(case_id):
+        """The records this investigation's own FILTER statements select."""
+        service.get_case(case_id)
+        return service.selection(case_id)
+
     @app.route("/api/v1/investigations/<case_id>/assessments", methods=["GET", "POST"])
     def assessments(case_id):
         if request.method == "POST":

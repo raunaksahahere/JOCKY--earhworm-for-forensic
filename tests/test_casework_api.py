@@ -211,3 +211,65 @@ def test_every_windows_unsupported_source_states_a_reason():
                 reason = adapter.unsupported_reasons.get(
                     source, f"{adapter.name} has no collector for {source} in this build.")
                 assert reason, f"{name} cannot collect {source} and gives no reason"
+
+
+# --- the language over HTTP ---------------------------------------------------
+
+ADVANCED = '''CASE "Advanced" {
+    TITLE "Every language feature the client can send"
+}
+TARGET "host"
+LET tools = ["/usr/bin/curl", "/usr/bin/wget"]
+DEFINE triage {
+    COLLECT PROCESSES
+    COLLECT NETWORK
+}
+RUN triage
+WHEN PLATFORM IS linux {
+    COLLECT USB
+}
+FILTER PATH ONEOF $tools AND NOT USER EQUALS "root"
+REPORT SUMMARY AS "advanced"
+'''
+
+
+def test_the_compile_route_returns_ir_and_a_plan(client):
+    result = post(client, "/api/v1/programs/compile", {"program": ADVANCED}).get_json()
+    assert result["ir"]["ir_version"] >= 2
+    assert result["ir"]["playbooks"] == ["triage"]
+    assert result["plan"]["platform"] in ("linux", "windows")
+    assert "JOCKY IR" in result["explanation"]
+    assert "execution plan" in result["plan_explanation"]
+
+
+def test_the_compile_route_resolves_a_guard_per_platform(client):
+    linux = post(client, "/api/v1/programs/compile",
+                 {"program": ADVANCED, "platform": "linux"}).get_json()
+    windows = post(client, "/api/v1/programs/compile",
+                   {"program": ADVANCED, "platform": "windows"}).get_json()
+    assert linux["plan"]["conditional_skips"] == []
+    assert [skip["source"] for skip in windows["plan"]["conditional_skips"]] == ["USB"]
+
+
+def test_the_compile_route_reports_a_program_error_rather_than_failing(client):
+    response = post(client, "/api/v1/programs/compile", {"program": 'CASE "c"\nRUN missing\n'})
+    assert response.status_code >= 400
+    error = response.get_json()["error"]
+    assert error["code"] == "program_error"
+    assert "does not DEFINE" in error["message"]
+
+
+def test_a_program_that_compiles_never_carries_a_command(client):
+    plan = post(client, "/api/v1/programs/compile", {"program": ADVANCED}).get_json()["plan"]
+    for task in plan["tasks"]:
+        assert "command" not in task
+
+
+def test_the_selection_route_is_empty_before_a_collection(client):
+    case = post(client, "/api/v1/cases", {"title": "S", "examiner": "R"}).get_json()
+    investigation = post(client, "/api/v1/investigations",
+                         {"title": "i", "case_id": case["id"]}).get_json()
+    selection = client.get(f"/api/v1/investigations/{investigation['id']}/selection",
+                           headers=HEADERS).get_json()
+    assert selection["applied"] is False
+    assert selection["results"] == []
