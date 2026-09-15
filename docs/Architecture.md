@@ -19,7 +19,7 @@ Flask API  (backend/api.py)
 Off to the side, and deliberately not in that chain:
 
 ```
-compiler/   language -> AST -> IR -> execution plan
+compiler/   .x language -> AST -> IR -> execution plan, and predicate evaluation
 analysis/   collectors, normalization, recognition, correlation, detection,
             briefs, search, case summary
 endpoint/   the agent that runs on another authorized machine
@@ -42,10 +42,10 @@ a source to a callable, and it does so through a fixed registry.
 ## The compilation chain
 
 ```
-program text
-   -> parse()       AST, a plain dictionary
+.x program text
+   -> parse()       AST, a plain dictionary; playbooks expanded, guards carried
    -> validate()    refuses what cannot be collected or correlated
-   -> to_ir()       IR_VERSION 1: platform-neutral, versioned, serializable
+   -> to_ir()       IR_VERSION 2: platform-neutral, versioned, serializable
    -> build_plan()  one platform's answer: named collectors, bounded options
    -> plan_runner   fixed registry: the complete list of what can happen
 ```
@@ -53,6 +53,22 @@ program text
 Each stage is a pure function of the previous one, which is what lets the same
 IR produce a Linux plan today and a Windows plan later without the program, the
 grammar or the IR changing.
+
+`parse()` reads every node out of the parse tree by type, never by position. The
+grammar names its keywords as terminals so none can be swallowed by a bare word,
+which means those keyword tokens stay in the tree; an earlier revision indexed
+children positionally and that one grammar change broke every statement at once.
+
+A `WHEN` guard is the clearest case of the separation. It is not resolved while
+parsing: the condition travels into the IR, and `build_plan` resolves it against
+the adapter. One program therefore yields a different plan per platform, and a
+guarded step that does not apply becomes a `SKIPPED_CONDITION` task — distinct
+from `UNSUPPORTED`, because the build could have collected it and the program
+chose not to.
+
+A `FILTER` is not resolved here at all. Predicates are lowered into the IR as a
+normalized tree and answered after collection by `analysis/selection.py`, so
+evidence is registered and hashed whole and a filter is a view over it.
 
 A plan carries no command. `plan_runner` checks a task's collector path against
 the registry rather than importing it, so a program can never load code JOCKY
@@ -137,12 +153,12 @@ cheap already exists.
 
 | | |
 |--|--|
-| Application | 0.8.1 |
+| Application | 0.9.0 |
 | API | 1 |
 | Report schema | 5 |
 | Database schema | 7 |
-| IR | 1 |
-| Plan | 1 |
+| IR | 2 |
+| Plan | 2 |
 | Detection ruleset | 1 |
 | Recognition | 1 |
 | Brief format | 1 |

@@ -11,6 +11,29 @@ on.
 | **Windows GitHub release** | **PUBLISHED** | The portable archive and installer are Release assets |
 | **Windows forensic host collection** | **NOT YET VALIDATED** | Needs a real investigated Windows host. Has not happened. |
 
+## 0.9.0 has not been re-validated on Windows
+
+Everything recorded below was established on **0.8.1**. The 0.9.0 language work
+has not been run on a Windows runner or a Windows host, and nothing in this
+document should be read as a claim that it has.
+
+What changed in 0.9.0 that a Windows run would need to re-establish:
+
+| Change | Why Windows validation is not implied |
+|--------|----------------------------------------|
+| Language front end rewritten | Pure Python, exercised by 969 tests on Linux. No platform-specific code, but no Windows run either. |
+| `WindowsAdapter` now resolves `WHEN` guards | The resolution is tested on Linux by building Windows plans. No Windows host has executed one. |
+| `IR_VERSION` 2, `PLAN_VERSION` 2 | A stored 0.8.1 investigation cannot be read by 0.9.0 on any platform; that is deliberate and tested. |
+| Client `.x` editor | `flutter analyze` and 181 Flutter tests pass on Linux only. |
+
+The Windows forensic-collection gap is unchanged and unaddressed by this
+release: six sources are mapped in `WindowsAdapter`, they are fixture-tested,
+`validated = False`, and `describe_plan` prints `NOT VALIDATED ON A REAL HOST`.
+Building a Windows plan is how you see what would and would not be collected
+there — it is not evidence that it would work.
+
+**WINDOWS READY / NOT VALIDATED.**
+
 ## The run this records
 
 | | |

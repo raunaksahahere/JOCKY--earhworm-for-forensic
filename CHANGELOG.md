@@ -2,6 +2,83 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.9.0 — 2026-09-15
+
+The JOCKY language was half-finished: the grammar had gained playbooks,
+conditions, boolean predicates, lists and named reports, and the parser had not
+been taught any of them. Naming the keywords as terminals also changed what the
+parser keeps in the tree, so every hard-coded child index shifted by one and the
+whole language front end broke at once — `int("WINDOW")`, every `COLLECT` source
+reading as `"COLLECT"`, 31 failures and 11 errors.
+
+The grammar was right, so this finishes it rather than reverting it.
+
+### Added
+
+- **Playbooks.** `DEFINE name { ... }` and `RUN name`, expanded into the IR where
+  they appear, so a playbook's collections are real collections rather than a
+  reference resolved later. A playbook that runs itself, directly or through
+  another, is a named error rather than a hang; nesting is bounded at 8.
+- **Conditional composition.** `WHEN PLATFORM IS linux { ... }` and
+  `WHEN SOURCE BROWSER IS SUPPORTED { ... }`. The guard is never resolved while
+  parsing — it travels into the IR and the platform adapter resolves it, which is
+  what keeps the IR platform-neutral. One program, a different plan per platform.
+  A guarded step becomes `SKIPPED_CONDITION`, deliberately distinct from
+  `UNSUPPORTED`: this build could have collected it and the program chose not to.
+- **Boolean predicates.** `AND`, `OR`, `NOT` and parentheses, lowered to a
+  normalized tree. `AND` binds tighter than `OR`. Investigations ask compound
+  questions, and a language that cannot say `AND` forces one into three
+  statements whose relationship to each other is lost.
+- **List values and `ONEOF`**, so the thing being looked for is named once.
+- **Named reports**: `REPORT BOTH AS "IR-2024-005-portable"`.
+- **`FILTER` now selects.** It was parsed, validated and planned, and then
+  applied to nothing. `compiler/predicate.py` evaluates a predicate against a
+  record and `analysis/selection.py` answers a program's filters against what
+  that program collected, behind `GET /api/v1/investigations/<id>/selection`.
+  A selection is a *view*: evidence is registered and hashed whole, and no record
+  is removed, rewritten or re-hashed to produce one. An empty selection means the
+  evidence does not answer the question, not that the evidence is gone — and the
+  response says so.
+- **A JOCKY `.x` editor in the client.** Load or write a program, compile it,
+  read the IR and the execution plan, run it, open the investigation. The client
+  never parses or validates a program itself: every result comes from the same
+  compiler a collection runs through, so the editor cannot report a program valid
+  that a collection would refuse.
+- **Five worked example programs** under `examples/`, every one compiled by the
+  test suite. The copies the editor offers are generated from those files and a
+  test fails if they drift.
+- `ENDS` and `ONEOF` operators; `PROCESS`, `URL`, `ADDRESS` and `ENDPOINT` filter
+  fields; `PROCESSES` as a correlation subject.
+
+### Changed
+
+- **The JOCKY source extension is `.x`.** The demo writes `program.x`.
+- `parse()` reads every node by type rather than by position. That is the actual
+  fix: an index is a guess about a grammar that has already changed once.
+- `IR_VERSION` 1 → 2 and `PLAN_VERSION` 1 → 2. Filters and reports changed shape,
+  so a version-1 IR is refused rather than misread.
+- A `MATCHES` pattern is compiled anywhere in an expression, not only at the top
+  level of a comparison.
+- Two collections of the same source under different guards are no longer a
+  duplicate — that is how one program serves two platforms.
+- The demo is driven by its program rather than by a list of selected sources,
+  and uses a binding, a playbook, a platform guard and a compound filter, so the
+  run exercises the language rather than only the collectors. It gained a step
+  showing the filter selecting real records from real evidence.
+
+### Fixed
+
+- The entire investigation-language front end, broken by the grammar change
+  described above. 31 failures and 11 errors across the language, plan-execution,
+  fleet and performance suites, all one root cause.
+- CI asserted `demo-output/program.jocky`, which the demo no longer writes.
+
+### Tests
+
+969 Python tests pass (up from 831 passing with 31 failures and 11 errors), 181
+Flutter tests pass, `flutter analyze` is clean. `scripts/smoke_backend.py` and
+`validation/multihost.py` both pass locally.
+
 ## 0.8.1 — 2026-09-15
 
 A 24-hour investigation produced a 71-page PDF. The first eight pages were the

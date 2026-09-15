@@ -6,7 +6,7 @@
 ; windows-latest runner.
 
 #define AppName "JOCKY Forensic Workstation"
-#define AppVersion GetEnv("JOCKY_VERSION") != "" ? GetEnv("JOCKY_VERSION") : "0.8.1"
+#define AppVersion GetEnv("JOCKY_VERSION") != "" ? GetEnv("JOCKY_VERSION") : "0.9.0"
 #define AppExe "jocky_client.exe"
 #define BundleDir "..\..\build\windows\x64\runner\Release"
 

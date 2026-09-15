@@ -1,12 +1,19 @@
 # Tracker
 
-State of the work as of application version 0.8.1, database schema 7.
+State of the work as of application version 0.9.0, database schema 7, IR 2, plan 2.
 
 ## Done
 
 | Area | Status |
 |------|--------|
-| Investigation language, IR, execution plan | Done, Linux validated |
+| JOCKY `.x` language: grammar, parser, semantics, IR, plan | Done, Linux validated |
+| Playbooks (`DEFINE`/`RUN`) with cycle and depth detection | Done, Linux validated |
+| Conditional composition (`WHEN`), resolved by the platform adapter | Done, Linux validated |
+| Boolean predicates: `AND`/`OR`/`NOT`/parentheses, list values, `ONEOF` | Done, Linux validated |
+| Named reports | Done, Linux validated |
+| `FILTER` answered against collected evidence as a selection | Done, Linux validated |
+| Five worked `.x` examples, all compiled by the test suite | Done |
+| JOCKY `.x` editor in the client, using the engine's compiler | Done, Linux validated |
 | Network, browser, USB, driver, services collectors | Done, Linux validated |
 | Memory analysis | Done, fixture-validated only |
 | Explainable detections (6 rules) | Done |
@@ -35,8 +42,8 @@ State of the work as of application version 0.8.1, database schema 7.
 | Selective thread reporting with a full tally | Done |
 | Evidence package laid out by source, both PDFs included | Done |
 | Windows application build and packaged runtime | Done, validated on Windows Server 2025 |
-| Windows release published | Done — portable archive and installer on v0.8.1, digest verified after download |
-| Test suites | 873 Python (865 on Windows, 8 POSIX-only skipped), 172 Flutter |
+| Windows release published | Done for **0.8.1** — portable archive and installer, digest verified after download. 0.9.0 has not been built or run on Windows. |
+| Test suites | 969 Python (4 skipped), 181 Flutter, analyzer clean |
 | Documentation set | Done |
 | Linux `.deb` release | Done |
 
