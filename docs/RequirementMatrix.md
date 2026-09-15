@@ -320,9 +320,9 @@ Three separate claims, deliberately not blurred. See `docs/WindowsValidation.md`
 
 | Claim | Status |
 |-------|--------|
-| Windows application build | **VALIDATED** — `windows.yml` on `windows-latest` |
+| Windows application build | **VALIDATED** — `windows.yml` on Windows Server 2025, run `34971374632` |
 | Windows packaged runtime | **VALIDATED** — the published artifact starts, serves its API and completes a read-only workflow |
-| Windows GitHub release | **PUBLISHED** — portable archive and installer are Release assets |
+| Windows GitHub release | **PUBLISHED** — portable archive (41.7 MB) and installer (32.0 MB) attached to v0.8.1 alongside the Linux `.deb` |
 | Windows forensic host collection | **NOT YET VALIDATED** |
 
 The application builds and the packaged artifact runs, verified against the file

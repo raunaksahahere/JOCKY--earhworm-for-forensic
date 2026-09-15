@@ -11,6 +11,50 @@ on.
 | **Windows GitHub release** | **PUBLISHED** | The portable archive and installer are Release assets |
 | **Windows forensic host collection** | **NOT YET VALIDATED** | Needs a real investigated Windows host. Has not happened. |
 
+## The run that established this
+
+Release **0.8.1**, workflow run `34971374632`.
+
+| | |
+|--|--|
+| Runner | Microsoft Windows Server 2025 Datacenter 10.0.26100 (build 26100) |
+| Python | 3.12.10 |
+| Flutter | 3.47.2 |
+| Inno Setup | 6, from the runner image |
+| Python tests | 865 passed, 8 skipped |
+| Flutter tests | 172 passed |
+| `flutter analyze` | clean |
+| Portable archive | `jocky-workstation-0.8.1-windows-x64-portable.zip`, 41,654,968 bytes, 168 files |
+| Installer | `jocky-workstation-0.8.1-windows-x64-setup.exe`, 32,004,324 bytes |
+| SHA-256 (portable) | `6a38448833af05c615de727d2c8c61dda5a46205e788023925866a9c3d76277a` |
+
+The eight skipped Python tests are the ones that exercise POSIX file mechanics —
+mode bits, effective uid, birth time — plus the multi-host validation, which
+needs a Docker daemon running Linux containers and so has none on a Windows
+runner. Each states its reason.
+
+The packaged smoke test, on the unpacked archive:
+
+```
+ok      jocky_client.exe / backend\JOCKY-backend.exe / backend\_internal
+ok      grammar.lark, investigation.lark, driver_risk_reference.json,
+        software_reference.json, bundled interpreter python3.dll
+engine ready on port 55013 with a per-process token
+health: ready, version 0.8.1, schema 7
+the health reply carries the instance the bootstrap announced
+an unauthenticated request is refused (401)
+platform reported by the packaged engine: Windows
+collection finished: completed
+6 evidence records: SYSTEM INFO, PROCESSES, EXECUTION HISTORY, FILES,
+                    ARTIFACTS, NETWORK
+investigator report: 4 pages, and the advertised page count matched it
+the engine shut down on request with exit code 0
+```
+
+The installer was then installed silently and put through the same test, and the
+published asset was downloaded from the Releases page onto a fresh runner,
+checked against that digest and run again.
+
 ## What is validated
 
 The application **builds** on a GitHub-hosted Windows runner: the Python suite

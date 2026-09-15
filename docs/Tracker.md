@@ -34,8 +34,8 @@ State of the work as of application version 0.8.1, database schema 7.
 | Investigator report split from its evidence | Done — 71 pages to 8, nothing removed |
 | Selective thread reporting with a full tally | Done |
 | Evidence package laid out by source, both PDFs included | Done |
-| Windows application build and packaged runtime | Done, validated on `windows-latest` |
-| Windows release published | Done — portable archive and installer |
+| Windows application build and packaged runtime | Done, validated on Windows Server 2025 |
+| Windows release published | Done — portable archive and installer on v0.8.1, digest verified after download |
 | Test suites | 830 Python, 172 Flutter |
 | Documentation set | Done |
 | Linux `.deb` release | Done |
@@ -53,6 +53,19 @@ State of the work as of application version 0.8.1, database schema 7.
 | **Two physical machines** | Multi-host is validated on two containers, which share the host kernel | Two separate kernels, for kernel-level evidence |
 | **Move off SQLite** | Not needed yet | A workload with concurrent endpoint writes. Path documented in `docs/Architecture.md`. |
 | **Wider detection ruleset** | Deliberately six, all explainable | More rules that can each state their evidence and confidence |
+
+## Bugs the Windows runner found
+
+Running the suite on a real Windows runner found four defects that were wrong
+everywhere and only visible there.
+
+| Bug | Where | Consequence |
+|-----|-------|-------------|
+| An `fstat` result compared against a `stat` result | `analysis/hashing.py` | Every file looked as though it had changed under the reader; no digest could be recorded on Windows at all |
+| Evidence paths normalized with the analysing host's path rules | `analysis/correlation.py` | `os.path.abspath("/usr/bin/curl")` on Windows invents a drive; every execution-to-artifact join from a Linux endpoint was silently lost |
+| An artifact recorded the locally-resolved path, not the evidence's | `analysis/artifacts.py` | Same join, one layer down |
+| The missing-engine diagnostic probed paths unguarded | `backend_supervisor.dart` | An unreachable share made the explanation itself throw, replacing "here is where I looked" with a filesystem error |
+| A native path embedded in a generated CMake script | `flutter_client/windows/CMakeLists.txt` | Backslashes are escapes there; the install step failed and took the whole Windows build with it |
 
 ## Bugs found and fixed in the 0.8.1 pass
 
