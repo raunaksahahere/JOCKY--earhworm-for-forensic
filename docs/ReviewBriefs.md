@@ -10,6 +10,50 @@ Three documents, each doing one job the others should not have to.
 
 Plus the **evidence package**, which holds all of it with a manifest.
 
+## Why the split exists
+
+A day of telemetry on a developer's machine is around 1,700 records. Printing
+them produced a **71-page** report whose first eight pages were the useful part,
+and a document nobody finishes is a document whose first eight pages also go
+unread.
+
+The investigator report is now those eight pages. Its length is set by how much
+there is to say, not by how much was collected — a test multiplies the activity
+from 20 records to 700 and asserts the page count moves by no more than two.
+Nothing was removed: the appendices are unchanged, available on request
+(`{"detailed": true}`), and carried inside the evidence package as
+`full-report.pdf`.
+
+```
+INVESTIGATOR REPORT   what do I need to know?          8 pages
+REVIEW BRIEF          tell me about this one thing.    1-2 pages
+EVIDENCE PACKAGE      show me everything.              everything
+```
+
+### What the primary report contains
+
+Nine sections and then it stops: investigation overview and conclusion, the
+result, the top leads, the **important** threads, significant events, a routine
+activity summary, an uncertain activity summary, collection limitations, and a
+reference to the evidence package with the next step.
+
+### Threads, selectively
+
+Printing all 25 threads is how a section becomes furniture. Priority 1 and 2
+always appear. A priority 3 thread appears only where it names a behaviour
+rather than a resemblance, or has confirmed execution across several distinct
+commands. The rest are tallied, so an investigator sees what was set aside:
+
+```
+Investigation threads: 25
+  Priority 1:                     0
+  Priority 2:                     2
+  Informational but noteworthy:   9
+  Routine:                       14
+```
+
+Six printed, 19 withheld, all 25 in the package with their evidence identifiers.
+
 ## Review briefs
 
 An investigator looking at `ART-0041` in a list of two thousand records has one
@@ -147,11 +191,31 @@ It is called **Routine / Recognized**. Never "Safe". Every copy carries:
 POST /api/v1/investigations/<id>/package
 ```
 
-A zip with a `MANIFEST.json` naming the case, the investigation, every version
-that produced it, the endpoints the evidence came from, the registered sources
-with their digests and integrity history, the collectors and their status, the
-programs that drove the collection, and **the SHA-256 of every file as
+A zip with a `MANIFEST.json` naming the case, the investigation, the collection
+period, every version that produced it — application, database and report
+schema, IR, plan, detection ruleset, recognition, and each collector's own
+recorded version — the endpoints the evidence came from, the registered source
+IDs with their digests and integrity history, the collectors and their status,
+the programs that drove the collection, and **the SHA-256 of every file as
 written**.
+
+Laid out by where evidence came from, so following an identifier means opening
+one file rather than searching a 25 MB payload:
+
+```
+MANIFEST.json              investigator-report.pdf    full-report.pdf
+report.json                README.txt
+
+evidence/    command-history  execution  activity  processes  artifacts
+             findings  threads  timeline  telemetry-sources  limitations
+             recognition  browser  usb  network  drivers  memory  services
+provenance/  evidence-sources  endpoints  audit-trail  programs  investigation
+analysis/    case-summary  narrative  routine-activity
+briefs/      any review briefs generated for this investigation
+```
+
+A source the collection did not run gets no file at all: an empty one would
+imply a collection that did not happen.
 
 ```python
 from backend.evidence_package import verify_package

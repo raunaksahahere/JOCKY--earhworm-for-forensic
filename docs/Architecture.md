@@ -137,7 +137,7 @@ cheap already exists.
 
 | | |
 |--|--|
-| Application | 0.8.0 |
+| Application | 0.8.1 |
 | API | 1 |
 | Report schema | 5 |
 | Database schema | 7 |

@@ -15,9 +15,22 @@ registered evidence sources, authorized endpoints and the audit trail.
 Software the machine's own records account for — anything a package manager,
 snap or known installation layout placed — is marked as recognized and can be
 filtered out of view, so a collection of two thousand records opens on the few
-hundred that need a person. Any single record, artifact, finding, lead or thread
-will produce a **review brief**: a one or two page answer to "what is this and
-do I care", with every statement traceable to the record it rests on.
+hundred that need a person.
+
+What comes out is three documents, each doing one job:
+
+| | Question | Typical |
+|--|----------|---------|
+| **Investigator report** | What do I need to know? | 8 pages |
+| **Review brief** | Tell me about this one thing. | 1–2 pages |
+| **Evidence package** | Show me everything. | everything collected |
+
+A day of telemetry is around 1,700 records. Printing them made a 71-page report
+whose first eight pages were the useful part, so the report is now those eight
+pages and its length is set by how much there is to say rather than how much was
+collected. Nothing was removed: the appendices are unchanged, available on
+request, and carried inside the evidence package alongside a manifest and a
+SHA-256 for every file.
 
 ### What it will not do
 
@@ -147,7 +160,7 @@ bash packaging/linux/build_deb.sh
 ```
 
 Artifacts: `flutter_client/build/linux/x64/release/bundle/` and
-`build/deb/jocky_0.8.0_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
+`build/deb/jocky_0.8.1_amd64.deb` (override with `JOCKY_VERSION`). The bundle includes the Python interpreter,
 modules, grammar, native Python dependencies and fonts. Node/Electron are absent.
 The Debian package installs resources in `/opt/jocky-workstation`, a launcher,
 desktop entry and icon; user data remains outside the installation directory.

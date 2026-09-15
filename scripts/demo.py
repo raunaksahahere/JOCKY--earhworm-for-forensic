@@ -39,7 +39,7 @@ sys.path.insert(0, str(ROOT))
 from analysis.fleet_correlation import correlate_fleet  # noqa: E402
 from backend.api import create_app  # noqa: E402
 from backend.paths import Paths  # noqa: E402
-from backend.pdf_report import render_pdf  # noqa: E402
+from backend.pdf_report import page_count, render_investigator_pdf, render_pdf  # noqa: E402
 from backend.service import Workstation  # noqa: E402
 from backend.storage import Store  # noqa: E402
 from compiler.investigation import compile_program, describe, parse  # noqa: E402
@@ -271,7 +271,15 @@ def main(argv=None):
         # ------------------------------------------------------------------
         step("Write the evidence package")
         report_pdf = output / "investigator-report.pdf"
-        report_pdf.write_bytes(render_pdf(payload))
+        investigator = render_investigator_pdf(payload)
+        report_pdf.write_bytes(investigator)
+        # The long document too, so the demo shows the difference rather than
+        # asserting it: the same evidence, presented two ways.
+        full = render_pdf(payload)
+        (output / "full-report.pdf").write_bytes(full)
+        print(f"  investigator report  {page_count(investigator)} pages")
+        print(f"  full report          {page_count(full)} pages "
+              f"(the same evidence, every appendix appended)")
         (output / "report.json").write_text(json.dumps(payload, indent=2, default=str))
         (output / "program.jocky").write_text(PROGRAM)
         (output / "ir.json").write_text(json.dumps(ir, indent=2))
@@ -292,6 +300,10 @@ def main(argv=None):
         step("What the demo established")
         print(f"  Case {case['id']} holds one local investigation and {len(tasks)} endpoint tasks.")
         print(f"  The report at {report_pdf} was produced from evidence collected on this host.")
+        print(f"  The report is {page_count(investigator)} pages because that is how much there "
+              "is to say;")
+        print(f"  the same evidence appended runs to {page_count(full)}, and none of it was "
+              "discarded.")
         print("  The synthetic scenarios are labelled throughout and are not host evidence.")
         print("  The audit trail records every action taken, separately from the evidence.")
         return 0

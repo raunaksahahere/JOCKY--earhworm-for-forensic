@@ -2,6 +2,73 @@
 
 All notable changes to JOCKY. Versions follow semantic versioning.
 
+## 0.8.1 — 2026-09-15
+
+A 24-hour investigation produced a 71-page PDF. The first eight pages were the
+investigator report; the remaining sixty-three were the evidence printed out.
+
+A document nobody finishes is a document whose first eight pages also go unread,
+so this release changes only how reports are packaged. No collector changed, no
+schema changed, no forensic semantics changed, and nothing was removed from the
+evidence.
+
+### Changed
+
+- **The investigator report is now eight pages.** It ends at section 9 and names
+  the evidence package rather than appending it. Its length is set by how much
+  there is to say, which is the whole claim: a test renders the same narrative
+  over 20 activities and over 700 and fails if the page count moves by more than
+  two. The old 71-page document is unchanged, still produced by `render_pdf`, and
+  available on request as `{"detailed": true}`.
+- **Threads are reported selectively.** Printing all twenty-five is how a
+  section becomes furniture. Priority 1 and 2 always appear; a priority 3 thread
+  appears only where it names a behaviour rather than a resemblance, or has
+  confirmed execution across several distinct commands. The rest are tallied, so
+  an investigator sees what was set aside: on the sample case, 2 priority-2, 9
+  noteworthy, 14 routine, 6 printed, 19 withheld — all 25 in the package with
+  their evidence identifiers.
+- **The evidence package is laid out by where evidence came from** — one file
+  per source under `evidence/`, provenance under `provenance/`, generated prose
+  under `analysis/` — so following an identifier means opening one file rather
+  than searching a 25 MB payload. It now carries both PDFs. A source the
+  collection did not run gets no file at all; an empty one would imply a
+  collection that did not happen.
+- **The manifest gained** the collection period, the IR, plan, ruleset and
+  recognition versions, each collector's own recorded version, and the
+  evidence-source IDs.
+- **The export panel shows what each artifact is before producing it** — eight
+  pages, four pages, 1,947 records — with the counts rendered by the engine
+  rather than estimated by the client, and each introduced by the question it
+  answers. The long document is offered last, described as what it is.
+
+### Added
+
+- `render_investigator_pdf` and `render_full_pdf` as named entry points, so both
+  documents are built by one code path and cannot drift apart in wording.
+- `extract_text`, which decodes ASCII85-then-Flate streams and maps subset-CID
+  glyph codes through the document's own ToUnicode table. Needed because a test
+  that greps the raw file for "the report says X" passes against a report that
+  says no such thing.
+- `GET /api/v1/investigations/<id>/artifacts-available`, reporting what an
+  investigation can produce and how large each one is.
+
+### Fixed
+
+- Four packaging assertions were passing for the wrong reason: they searched the
+  raw PDF bytes, which hold glyph indices rather than characters.
+- A package test altered `findings.json`, which had moved into `evidence/`, so
+  it was asserting that an unaltered package fails verification. It now takes
+  the member to alter from the manifest.
+- The smoke test imported `backend` while deliberately running outside the
+  source tree against the frozen engine.
+- `recognition_version` and the collection-period fields were null in the
+  manifest.
+
+### Unchanged
+
+Collectors, the evidence model, the database schema and the report schema. Every
+record that left the PDF is in the package, and the tests count both sides.
+
 ## 0.8.0 — 2026-09-15
 
 A collection produced seven hundred distinct activities and asked an

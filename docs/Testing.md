@@ -33,6 +33,7 @@ labelled as one.
 | `test_multihost.py` | Real two-container validation, memory workflow, evidence package |
 | `test_assessments.py` | Investigator judgement stored beside the machine's, never over it |
 | `test_storage_abstraction.py` | The boundary the scale-out path depends on |
+| `test_report_packaging.py` | That the report stays short and the evidence stays complete |
 | `test_correlation.py`, `test_triage.py`, `test_threads.py`, `test_timeline.py` | The analysis pipeline |
 | `test_execution_history.py`, `test_execution_windows.py` | Telemetry collection |
 | `test_reports.py`, `test_report_presentation.py` | Report construction and rendering |
@@ -70,6 +71,23 @@ and 6 were also each run against the actual development database (1,849 and
 **No command route.** `test_there_is_no_route_that_runs_a_command_on_an_endpoint`
 walks the URL map and fails if any endpoint route name contains command, exec,
 shell, run or script.
+
+**Report length against evidence volume.**
+`test_evidence_volume_does_not_change_the_report_length` renders the same
+narrative over 20 activities and over 700, and fails if the page count moves by
+more than two. The claim "the report is short because there is little to say"
+has to be checkable, or it is just a shorter report.
+
+**Nothing lost in the split.** `test_no_record_is_lost_between_the_report_and_the_package`
+counts activities, command-history records, artifacts, findings, threads and
+processes on both sides of the export, and a second test compares the individual
+evidence references rather than only the totals.
+
+**PDF text, actually read.** `backend.pdf_report.extract_text` decodes the
+ASCII85-then-Flate streams and maps subset-CID glyph codes back through the
+document's own ToUnicode table. Without it, an assertion that the report *says*
+something passes against a report that says no such thing — four of the first
+seven such assertions were passing for exactly that reason.
 
 ## Flutter suites
 

@@ -1,6 +1,7 @@
 """Real process integration: bootstrap/auth/collection/restart/PDF/clean shutdown."""
 import argparse
 import json
+import re
 import os
 import subprocess
 import sys
@@ -19,6 +20,16 @@ def start(command, workspace):
         if message['event'] == 'startup_error': raise RuntimeError(str(message['error']))
         if message['event'] == 'ready': return process, message
     raise RuntimeError('No readiness record')
+
+
+def page_count(pdf):
+    """Pages in a rendered document.
+
+    Counted here rather than imported: this script drives the frozen engine from
+    outside the source tree, deliberately, so it must not depend on the package
+    being importable.
+    """
+    return len(re.findall(rb'/Type\s*/Page[^s]', pdf))
 
 
 def request(session, path, body=None):
@@ -134,9 +145,29 @@ def smoke(command, workspace):
         process, session = start(command, workspace)
         saved = request(session, '/api/v1/investigations/'+case['id'])
         assert saved['status'] == case['status']
+        # The default export is the investigator report: short, and its length
+        # set by how much there is to say. A packaged engine that shipped the
+        # seventy-page document by default would be the regression this whole
+        # split exists to prevent.
         pdf = request(session, '/api/v1/investigations/'+case['id']+'/report/export', {'format':'pdf'})
         assert pdf.startswith(b'%PDF-')
         (workspace / 'smoke-report.pdf').write_bytes(pdf)
+        investigator_pages = page_count(pdf)
+        assert investigator_pages <= 14, (
+            f'the default report is {investigator_pages} pages; raw evidence volume has '
+            'inflated the investigator report')
+
+        full = request(session, '/api/v1/investigations/'+case['id']+'/report/export',
+                       {'format': 'pdf', 'detailed': True})
+        full_pages = page_count(full)
+        assert full_pages > investigator_pages, (
+            'the detailed report must still carry the appendices')
+        (workspace / 'smoke-full-report.pdf').write_bytes(full)
+
+        offered = request(session, f"/api/v1/investigations/{case['id']}/artifacts-available")
+        assert offered['investigator_report']['pages'] == investigator_pages, (
+            'the advertised page count must be the one in the document')
+        assert offered['evidence_package']['records'] > 0
 
         # --- what an investigator actually does with a finished collection ---
         # Recognition must have run and been stored, not recomputed on demand.
@@ -208,7 +239,8 @@ def smoke(command, workspace):
         assert len(request(session, f"/api/v1/investigations/{case['id']}/execution-events")['items']) == len(history)
         stop(process, session)
         print(json.dumps({'result':'passed','investigation_id':case['id'],'status':case['status'],
-                          'pdf_bytes':len(pdf),'brief_pdf_bytes':len(brief_pdf),
+                          'pdf_bytes':len(pdf),'investigator_pages':investigator_pages,
+                          'full_report_pages':full_pages,'brief_pdf_bytes':len(brief_pdf),
                           'routine_pdf_bytes':len(routine_pdf),'package_bytes':len(package),
                           'package_files':len(manifest['files']),
                           'recognized_artifacts':recognition['artifacts_recognized'],

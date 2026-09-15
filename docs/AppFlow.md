@@ -88,9 +88,21 @@ and the database hold everything.
 
 ## Exporting
 
-**Export** produces the PDF an investigator reads, or the full JSON payload. The
-PDF is eight pages with the complete evidence in appendices A–I. Encrypted
-export requires an explicit passphrase.
+The **Investigation artifacts** panel shows what can be produced and how large
+each one is *before* producing it — the page counts come from the engine, which
+renders the documents to answer.
+
+| | Question it answers | Typical |
+|--|--------------------|---------|
+| Investigator report | What do I need to know? | 8 pages |
+| Review brief | Tell me about this one thing. | 1–2 pages |
+| Evidence package | Show me everything. | everything collected |
+| Routine activity report | Optional, for the record | 4 pages |
+| Full report | Rarely wanted; grows with the evidence | 71 pages |
+
+The investigator report is the default. The long document with every appendix is
+still available and still unchanged — it is offered last, described as what it
+is. Encrypted export requires an explicit passphrase.
 
 ## Clearing history
 

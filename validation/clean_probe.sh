@@ -104,7 +104,23 @@ echo "   case summary generated with its closing qualification"
 
 download "/api/v1/investigations/$CASE/report/export" /tmp/report.pdf '{"format":"pdf"}'
 head -c 4 /tmp/report.pdf | grep -q '%PDF' || fail "the report is not a PDF"
-echo "   investigator report: $(stat -c%s /tmp/report.pdf) bytes"
+# Pages read from the document's own page tree. Counting /Type /Page objects
+# with grep returns zero here, because grep is line-based and the object spans a
+# newline -- which would have made this check silently pass on any document.
+pages() { grep -ao '/Count [0-9]*' "$1" | head -1 | tr -dc '0-9'; }
+INV_PAGES=$(pages /tmp/report.pdf)
+echo "   investigator report: $INV_PAGES pages, $(stat -c%s /tmp/report.pdf) bytes"
+
+ADVERTISED=$(get "/api/v1/investigations/$CASE/artifacts-available" \
+             | grep -o '"investigator_report":[^}]*' | value pages)
+[ "$ADVERTISED" = "$INV_PAGES" ] || fail "advertised $ADVERTISED pages, produced $INV_PAGES"
+echo "   the advertised page count matches the document"
+
+download "/api/v1/investigations/$CASE/report/export" /tmp/full.pdf \
+         '{"format":"pdf","detailed":true}'
+FULL_PAGES=$(pages /tmp/full.pdf)
+[ "$FULL_PAGES" -ge "$INV_PAGES" ] || fail "the detailed report lost its appendices"
+echo "   full report with appendices: $FULL_PAGES pages (still available, unchanged)"
 
 download "/api/v1/investigations/$CASE/routine/export" /tmp/routine.pdf '{}'
 head -c 4 /tmp/routine.pdf | grep -q '%PDF' || fail "the routine report is not a PDF"

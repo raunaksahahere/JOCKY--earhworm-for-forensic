@@ -1,6 +1,6 @@
 # Tracker
 
-State of the work as of application version 0.8.0, database schema 7.
+State of the work as of application version 0.8.1, database schema 7.
 
 ## Done
 
@@ -31,7 +31,10 @@ State of the work as of application version 0.8.0, database schema 7.
 | Memory workflow: register, hash, verify, analyse, link | Done; analysis fixture-only |
 | Forensic container identification | Done (identification only) |
 | Storage abstraction proof | Done, 11 tests |
-| Test suites | 804 Python, 158 Flutter |
+| Investigator report split from its evidence | Done — 71 pages to 8, nothing removed |
+| Selective thread reporting with a full tally | Done |
+| Evidence package laid out by source, both PDFs included | Done |
+| Test suites | 828 Python, 169 Flutter |
 | Documentation set | Done |
 | Linux `.deb` release | Done |
 
@@ -46,6 +49,15 @@ State of the work as of application version 0.8.0, database schema 7.
 | **Two physical machines** | Multi-host is validated on two containers, which share the host kernel | Two separate kernels, for kernel-level evidence |
 | **Move off SQLite** | Not needed yet | A workload with concurrent endpoint writes. Path documented in `docs/Architecture.md`. |
 | **Wider detection ruleset** | Deliberately six, all explainable | More rules that can each state their evidence and confidence |
+
+## Bugs found and fixed in the 0.8.1 pass
+
+| Bug | Where | How it was found |
+|-----|-------|------------------|
+| PDF assertions searched the raw file, so four tests claiming "the report says X" passed against a report that said no such thing (subset CID fonts over ASCII85-then-Flate streams) | `tests/` | Writing the packaging tests |
+| A package test altered `findings.json`, which had moved to `evidence/`, so it asserted that an *unaltered* package fails verification | `tests/test_multihost.py` | Running the suite after the package layout changed |
+| The smoke test imported `backend` while deliberately running outside the source tree | `scripts/smoke_backend.py` | Running it against the frozen engine |
+| `recognition_version` and the collection-period fields were null in the manifest | `backend/service.py`, `backend/evidence_package.py` | Reading the generated manifest |
 
 ## Bugs found and fixed in the 0.8.0 pass
 

@@ -247,9 +247,26 @@ into a program first.
 
 **IMPLEMENTED · LINUX VALIDATED**
 
-Eight-page investigator PDF with appendices A–I; the full payload, endpoint
-results, cross-host correlation and audit trail as JSON. `scripts/demo.py`
-writes the complete package.
+`backend/pdf_report.py`, `backend/evidence_package.py`,
+`tests/test_report_packaging.py` (23). See `docs/ReviewBriefs.md`.
+
+Three documents, split so each does one job. The **investigator report** is the
+narrative alone — nine sections, then it stops — and is 8 pages for a day of
+telemetry that previously produced 71. Its length is set by how much there is to
+say: a test renders the same narrative over 20 activities and over 700 and fails
+if the page count moves by more than two.
+
+The **evidence package** carries everything that left the report, one file per
+source, plus both PDFs and a manifest recording the collection period, every
+version including each collector's own, the evidence-source IDs and a SHA-256
+per file. A test counts activities, command-history records, artifacts,
+findings, threads and processes on both sides of the export and compares the
+individual evidence references, because "nothing was removed" has to be
+checkable.
+
+The **routine activity report** and **review briefs** remain separate and
+optional. `render_pdf` keeps its previous behaviour, so existing callers get the
+full document unchanged.
 
 ## V — CI/CD
 
@@ -309,8 +326,8 @@ it. Nothing in this project should be described as working on Windows.
 
 | Suite | Count |
 |-------|-------|
-| Python | 804 |
-| Flutter | 158 |
+| Python | 828 |
+| Flutter | 169 |
 
 ---
 
