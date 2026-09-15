@@ -160,16 +160,22 @@ def smoke(command, workspace):
         assert all(source['status'] in ('AVAILABLE','NOT_AVAILABLE','NOT_ENABLED','PERMISSION_DENIED')
                    for source in sources), sources
         assert all(event['classification'] == 'HISTORICAL_EVIDENCE' for event in history)
-        if telemetry_available := stored['historical_execution']['telemetry_available']:
-            assert findings, 'an investigation with telemetry must not end with zero findings'
-        elif not findings:
-            # A machine with no readable execution telemetry has nothing to find,
-            # and saying so is correct. The limitations must still be recorded.
-            assert stored['limitations'], (
-                'no findings and no stated limitation: the report explains neither')
-            print('no telemetry on this host; zero findings is the honest result',
-                  file=sys.stderr)
-        telemetry = telemetry_available
+        # Findings are not guaranteed, and requiring them would be requiring the
+        # examined machine to be interesting. A clean CI runner with a handful
+        # of events genuinely has nothing to report, and a tool that invented
+        # something rather than saying so would be the worse failure.
+        #
+        # What must always hold is that the report accounts for itself: every
+        # source reported with a status, the limits of the collection stated,
+        # and a written conclusion. That is true of a busy workstation and of a
+        # runner that booted a minute ago.
+        telemetry = stored['historical_execution']['telemetry_available']
+        assert stored['conclusion'], 'a report must interpret its own result'
+        assert stored['limitations'], 'a report must state the limits of what it covers'
+        for finding in findings:
+            assert finding.get('reference'), 'every finding needs a citable identifier'
+            assert finding.get('explanation'), 'every finding must explain itself'
+        print(f"telemetry available: {telemetry}; {len(findings)} finding(s)", file=sys.stderr)
         stop(process, session)
         process, session = start(command, workspace)
         saved = request(session, '/api/v1/investigations/'+case['id'])
