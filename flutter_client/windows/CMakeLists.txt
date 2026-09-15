@@ -133,6 +133,7 @@ endif()
 
 install(CODE "
   set(engine \"${JOCKY_BACKEND_DIST}\")
+  message(STATUS \"JOCKY: looking for the engine at \${engine}\")
   if(EXISTS \"\${engine}/${JOCKY_BACKEND_EXE}\")
     file(REMOVE_RECURSE \"${CMAKE_INSTALL_PREFIX}/backend\")
     file(INSTALL \"\${engine}/\" DESTINATION \"${CMAKE_INSTALL_PREFIX}/backend\"
