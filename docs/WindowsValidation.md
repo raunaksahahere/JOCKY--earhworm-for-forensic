@@ -11,6 +11,26 @@ on.
 | **Windows GitHub release** | **PUBLISHED** | The portable archive and installer are Release assets |
 | **Windows forensic host collection** | **NOT YET VALIDATED** | Needs a real investigated Windows host. Has not happened. |
 
+## The run this records
+
+| | |
+|--|--|
+| Version | 0.8.1 (`v0.8.1`) |
+| Runner | Microsoft Windows Server 2025 Datacenter 10.0.26100 (build 26100) |
+| Python | 3.12.10 |
+| Flutter | 3.47.2 |
+| Python tests | 865 passed, 8 skipped |
+| Flutter tests | 171 passed, 1 skipped |
+| `flutter analyze` | clean |
+| Portable archive | `jocky-workstation-0.8.1-windows-x64-portable.zip`, 41,654,968 bytes |
+| Installer | `jocky-workstation-0.8.1-windows-x64-setup.exe`, 32,004,324 bytes |
+| Portable SHA-256 | `6a38448833af05c615de727d2c8c61dda5a46205e788023925866a9c3d76277a` |
+
+The published asset was downloaded from the Releases page onto a fresh runner,
+checked byte-for-byte against that digest, unpacked and run through the smoke
+test again. The eight skipped Python tests exercise POSIX file mechanics and say
+so; the one skipped Flutter test needs a Linux release bundle.
+
 ## The run that established this
 
 Release **0.8.1**, workflow run `34971374632`.
@@ -77,7 +97,8 @@ against the final file rather than the build tree:
 4. An unauthenticated request is refused with 401.
 5. A read-only collection runs — one file hashed, a one-hour window, the network
    collector — a report is issued, and the investigator PDF renders with the page
-   count the engine advertised.
+   count the engine advertised. On the runner that is a four-page report, because
+   a machine that booted a minute ago has almost nothing to say.
 6. The engine shuts down on request with exit code 0.
 
 The **installer** is compiled, installed silently, and the same smoke test is

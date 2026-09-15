@@ -36,7 +36,7 @@ State of the work as of application version 0.8.1, database schema 7.
 | Evidence package laid out by source, both PDFs included | Done |
 | Windows application build and packaged runtime | Done, validated on Windows Server 2025 |
 | Windows release published | Done — portable archive and installer on v0.8.1, digest verified after download |
-| Test suites | 830 Python, 172 Flutter |
+| Test suites | 873 Python (865 on Windows, 8 POSIX-only skipped), 172 Flutter |
 | Documentation set | Done |
 | Linux `.deb` release | Done |
 
@@ -66,6 +66,19 @@ everywhere and only visible there.
 | An artifact recorded the locally-resolved path, not the evidence's | `analysis/artifacts.py` | Same join, one layer down |
 | The missing-engine diagnostic probed paths unguarded | `backend_supervisor.dart` | An unreachable share made the explanation itself throw, replacing "here is where I looked" with a filesystem error |
 | A native path embedded in a generated CMake script | `flutter_client/windows/CMakeLists.txt` | Backslashes are escapes there; the install step failed and took the whole Windows build with it |
+
+## Bugs the Windows runner found
+
+All five were invisible on Linux, and three were real product defects rather
+than test problems.
+
+| Bug | Where | Effect on Windows |
+|-----|-------|-------------------|
+| The identity check compared an `os.fstat` result against an `os.stat` one; Windows reports the same file differently through a handle and a path | `analysis/hashing.py` | **Every** file refused with "File changed during hashing" — no digest could be recorded at all |
+| Evidence paths normalized with the analysing host's rules: `os.path.abspath("/usr/bin/curl")` becomes `D:\usr\bin\curl` | `analysis/correlation.py`, `analysis/artifacts.py` | Correlation lost every join, so no artifact-to-execution finding was produced |
+| The ancestor walk joined a filesystem root to a segment, producing `C:\\backend-dist\...` — a UNC path | `backend_supervisor.dart` | The engine search went to the network, timed out and threw, abandoning the candidates after it |
+| `flutter --version --machine` parsed with its first-run progress output | `windows.yml` | The workflow failed before installing anything |
+| MSBuild reports a failing install step as its batch wrapper and Flutter swallows CMake's message | `packaging/windows/build.ps1` | A build failure with no stated cause |
 
 ## Bugs found and fixed in the 0.8.1 pass
 
