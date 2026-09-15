@@ -119,7 +119,14 @@ jobs:
           $os = (Get-CimInstance Win32_OperatingSystem)
           $runner = "$($os.Caption) $($os.Version) (build $($os.BuildNumber))"
           $python = (python --version) -replace '^Python\s+', ''
-          $flutter = ((flutter --version --machine | ConvertFrom-Json).frameworkVersion)
+          # Flutter's first invocation builds its own tool and prints progress
+          # before any output, so warm it up and then take only the JSON --
+          # parsing the whole stream fails on "Building flutter tool...".
+          flutter --version | Out-Null
+          $raw = (flutter --version --machine | Out-String)
+          $brace = $raw.IndexOf('{')
+          if ($brace -lt 0) { throw "flutter --version --machine produced no JSON: $raw" }
+          $flutter = ($raw.Substring($brace) | ConvertFrom-Json).frameworkVersion
           "runner=$runner"   | Out-File $env:GITHUB_OUTPUT -Append
           "python=$python"   | Out-File $env:GITHUB_OUTPUT -Append
           "flutter=$flutter" | Out-File $env:GITHUB_OUTPUT -Append
