@@ -101,7 +101,42 @@ the validation deliberately asserts nothing that depends on it.
 **Forensic container extraction.** Containers are identified from their headers
 and preserved. Nothing extracts one, by design.
 
+## The two validations that are not unit tests
+
+```bash
+python3 validation/multihost.py      # two separate Linux environments
+bash validation/clean_install.sh     # the built .deb on a clean Ubuntu
+```
+
+**`validation/multihost.py`** starts two containers and proves they are
+genuinely separate before it asserts anything else — distinct hostnames,
+distinct process tables both beginning at pid 1, and a file planted on one host
+demonstrably absent on the other. It then plants one file on both and one on
+only one, and checks the shared digest correlates naming both endpoints while
+the unique one does not correlate at all. It runs in the Python suite and in
+CI, and skips honestly where Docker is absent rather than passing.
+
+**`validation/clean_install.sh`** installs the built `.deb` into an
+`ubuntu:24.04` container with no Python, no build tools and no source tree,
+checks the interpreter and all four data files landed, then drives the installed
+engine over its own bootstrap channel: health, an unauthenticated request
+refused, a real collection with program-selected sources, the investigator
+report, the routine report, a review brief and the evidence package. It runs in
+the release workflow, where there is a package to install.
+
+A package that runs on the machine that built it has proved nothing.
+
 ## CI
 
-`.github/workflows/ci.yml` runs the Python suite, `flutter analyze` and the
-Flutter suite on every push and pull request, on native runners.
+`.github/workflows/ci.yml` runs five jobs on every push and pull request:
+
+| Job | What it guards |
+|-----|----------------|
+| `backend` | The Python suite and the packaged-engine smoke test |
+| `demo` | The whole chain end to end, and that every synthetic record is labelled |
+| `client` | `flutter analyze` and the Flutter suite |
+| `multihost` | Real two-host correlation, and that the non-match does not correlate |
+| `boundaries` | Registry-bound collectors, no command column, no execution path in the agent |
+
+`release.yml` additionally installs the built `.deb` in a clean container and
+uses it there before anything is published.

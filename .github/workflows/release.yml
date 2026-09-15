@@ -168,6 +168,11 @@ jobs:
         env:
           JOCKY_TEST_BUNDLE: build/windows/x64/runner/Release
 
+      - name: Install the package in a clean environment and use it there
+        # A package that runs on the machine that built it has proved nothing:
+        # the build host has the interpreter, the libraries and the source tree.
+        run: bash validation/clean_install.sh "$(ls -t build/deb/jocky_*_amd64.deb | head -1)"
+
       - name: Build the portable archive
         env:
           JOCKY_VERSION: ${{ needs.version.outputs.version }}

@@ -102,6 +102,45 @@ jobs:
       - working-directory: flutter_client
         run: flutter test
 
+  # Two genuinely separate Linux environments. The previous pass validated
+  # cross-host correlation with two agents on one machine and said so; this is
+  # the thing that closes that gap, so it runs on every push rather than being
+  # something someone remembers to do.
+  multihost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Real two-host validation
+        run: python validation/multihost.py --output validation-output
+      - name: The correlation must name both hosts, and the non-match neither
+        run: |
+          python - <<'CHECK'
+          import json, pathlib
+          report = json.loads(
+              pathlib.Path("validation-output/multihost-validation.json").read_text())
+          assert report["result"] == "PASSED", report.get("error")
+          assert report["hostnames"]["endpoint-a"] != report["hostnames"]["endpoint-b"]
+          matched = {item["value"]: item for item in report["correlation"]["correlations"]}
+          shared = matched[report["shared_sha256"]]
+          assert set(shared["endpoints"]) == set(report["hostnames"].values()), shared
+          assert report["unique_sha256"] not in matched, (
+              "a file on one host only was reported as a cross-host match")
+          assert report["limitations"], "the validation must state what it does not establish"
+          print(f"two hosts, {report['correlation']['correlation_count']} correlation(s), "
+                "non-match verified")
+          CHECK
+      - uses: actions/upload-artifact@v4
+        with:
+          name: multihost-validation
+          path: validation-output/multihost-validation.json
+          retention-days: 14
+
   # A boundary that is only stated in a document is not a boundary. These are
   # the properties the product's whole premise rests on, so they are checked on
   # every push rather than only in the suites a change might not run.
