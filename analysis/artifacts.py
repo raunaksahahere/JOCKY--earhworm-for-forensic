@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import hashing
+from .evidence_paths import basename as evidence_basename, is_absolute, normalize
 from .indicators import evaluate_filename
 
 MAX_ARTIFACTS = 200
@@ -72,10 +73,21 @@ def observe_artifact(path, *, source, cancel=None) -> dict:
     """
     if cancel is not None and cancel.is_set():
         raise InterruptedError("Collection cancelled between artifact observations")
-    absolute = os.path.abspath(path)
-    filename = os.path.basename(absolute) or absolute
+    # The record is about the path the evidence named, so that is what it
+    # stores. Replacing it with a locally-absolutized form invents a location
+    # the evidence never contained -- on Windows, os.path.abspath turns an
+    # endpoint's "/usr/bin/curl" into "D:\usr\bin\curl" -- and every join that
+    # depended on the path stops matching.
+    #
+    # What this machine actually looked at is kept beside it, because "we
+    # examined this and found nothing" is a different statement from "the
+    # evidence named this".
+    named = normalize(path)
+    examined = os.path.abspath(path)
+    filename = evidence_basename(named) or named
     record = {
-        "path": absolute,
+        "path": named,
+        "examined_path": examined,
         "filename": filename,
         "extension": os.path.splitext(filename)[1].lower() or None,
         "source": source,
@@ -90,12 +102,12 @@ def observe_artifact(path, *, source, cancel=None) -> dict:
         "integrity": None,
         "integrity_history": None,
         "previous_hash": None,
-        "notable_location": notable_location(absolute),
+        "notable_location": notable_location(named),
         "classification": "OBSERVED",
         "unavailable": {},
     }
     try:
-        stat = os.stat(absolute)
+        stat = os.stat(examined)
     except FileNotFoundError:
         record.update(collection_status=MISSING, classification="UNAVAILABLE")
         record["unavailable"]["file"] = "the path named by the evidence does not exist at collection time"
@@ -118,7 +130,7 @@ def observe_artifact(path, *, source, cancel=None) -> dict:
     else:
         record["unavailable"]["created"] = "this filesystem does not expose a creation time"
 
-    if not os.path.isfile(absolute):
+    if not os.path.isfile(examined):
         record.update(collection_status=NOT_A_FILE)
         record["unavailable"]["hash"] = "the path is a directory or special file, not a regular file"
         return record
@@ -131,7 +143,7 @@ def observe_artifact(path, *, source, cancel=None) -> dict:
         return record
 
     try:
-        digest = hashing.hash_file(absolute)
+        digest = hashing.hash_file(examined)
     except PermissionError:
         record.update(collection_status=PERMISSION_DENIED)
         record["unavailable"]["hash"] = "the file could not be opened for reading"
@@ -172,14 +184,17 @@ def collect_artifacts(*, selected_paths=(), events=(), cancel=None) -> dict:
 
     def add(path, source):
         nonlocal skipped_for_bound
-        absolute = os.path.abspath(path)
-        if absolute in seen:
+        # Deduplicated on the evidence's own spelling. Absolutizing here would
+        # rewrite an endpoint's path into this machine's filesystem before
+        # observe_artifact ever saw what the evidence actually said.
+        named = normalize(path)
+        if named in seen:
             return
         if len(records) >= MAX_ARTIFACTS:
             skipped_for_bound += 1
             return
-        seen.add(absolute)
-        records.append(observe_artifact(absolute, source=source, cancel=cancel))
+        seen.add(named)
+        records.append(observe_artifact(path, source=source, cancel=cancel))
 
     for path in selected_paths:
         if os.path.isdir(path):

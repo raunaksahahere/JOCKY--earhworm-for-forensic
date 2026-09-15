@@ -126,7 +126,11 @@ def test_one_failing_collector_does_not_lose_the_others(tmp_path, monkeypatch):
     from compiler.plan import adapter_for
 
     supported = [source for source in adapter_for().supported
-                 if source in plan_runner.REGISTRY and source not in plan_runner.BASELINE]
+                 if source in plan_runner.REGISTRY and source not in plan_runner.BASELINE
+                 # MEMORY needs an image to analyse, so it cannot stand in for a
+                 # collector that simply runs. On Windows it is one of only two
+                 # supported sources, which is how it got picked.
+                 and source not in plan_runner.NEEDS_ARGUMENT]
     if len(supported) < 2:
         pytest.skip(f"{adapter_for().name} has fewer than two selectable collectors")
     broken, working_source = supported[0], supported[1]
