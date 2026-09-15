@@ -211,6 +211,7 @@ def test_the_package_describes_itself(package):
 
 
 def test_every_file_in_the_package_is_hashed(package):
+    """No member may be in the archive without a digest, or the reverse."""
     with zipfile.ZipFile(io.BytesIO(package)) as archive:
         manifest = json.loads(archive.read("MANIFEST.json"))
         names = set(archive.namelist()) - {"MANIFEST.json"}
@@ -227,18 +228,29 @@ def test_a_package_verifies_against_its_own_manifest(package):
 
 
 def test_an_altered_package_fails_verification(package):
-    """The point of the digests: alteration has to be detectable."""
+    """The point of the digests: alteration has to be detectable.
+
+    The member to alter is taken from the manifest rather than named here, so a
+    renamed file cannot make this pass by altering nothing -- which is exactly
+    what happened when the package layout moved evidence into subdirectories.
+    """
+    with zipfile.ZipFile(io.BytesIO(package)) as archive:
+        manifest = json.loads(archive.read("MANIFEST.json"))
+    target_name = next(entry["name"] for entry in manifest["files"]
+                       if entry["name"].endswith(".json"))
+
     buffer = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(package)) as source:
         with zipfile.ZipFile(buffer, "w") as target:
             for name in source.namelist():
                 data = source.read(name)
-                if name == "findings.json":
+                if name == target_name:
                     data = b'[{"title": "a finding nobody made"}]'
                 target.writestr(name, data)
+
     result = verify_package(buffer.getvalue())
     assert result["verified"] is False
-    assert "findings.json" in result["mismatched"]
+    assert result["mismatched"] == [target_name]
     assert "altered since export" in result["detail"]
 
 

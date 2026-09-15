@@ -9,7 +9,7 @@ import sqlite3
 from flask import Flask, request, send_file
 from werkzeug.exceptions import HTTPException
 
-from backend.pdf_report import render_pdf
+from backend.pdf_report import page_count, render_investigator_pdf, render_pdf
 from backend.casework import CaseworkError
 from backend.service import ServiceError
 from backend.storage import StorageError
@@ -191,7 +191,14 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
             return send_file(io.BytesIO(json.dumps(report, ensure_ascii=False, allow_nan=False, indent=2).encode()), mimetype="application/json", as_attachment=True, download_name=f"jocky-{case_id}.json")
         if data.get("format", "pdf") != "pdf":
             raise ServiceError("format must be pdf or json")
-        return send_file(io.BytesIO(render_pdf(report)), mimetype="application/pdf", as_attachment=True, download_name=f"jocky-{case_id}.pdf")
+        # The investigator report by default. `detailed` appends every appendix,
+        # which is the seventy-page document -- available to anyone who asks for
+        # it, and never what an investigator gets by accident.
+        detailed = bool(data.get("detailed"))
+        pdf = render_pdf(report, detailed=detailed)
+        name = ("JOCKY_Full_Report_" if detailed else "JOCKY_Investigator_Report_") + case_id
+        return send_file(io.BytesIO(pdf), mimetype="application/pdf", as_attachment=True,
+                         download_name=f"{name}.pdf")
 
     @app.post("/api/v1/storage/backup")
     def backup():
@@ -533,7 +540,8 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
         if report.get("investigation", {}).get("case_id"):
             case = service.casework.get_case(report["investigation"]["case_id"])
         payload = build_package(
-            report=report, pdf=render_pdf(report), case=case,
+            report=report, pdf=render_investigator_pdf(report), full_pdf=render_pdf(report),
+            case=case,
             endpoints=service.fleet.list_endpoints(),
             evidence_sources=service.casework.list_evidence(
                 case_id=(case or {}).get("id")),
@@ -543,7 +551,54 @@ def create_app(service, token=None, instance_id=None, shutdown=None):
             routine=routine, case_summary=service.case_summary(case_id, persist=True),
             narrative=service.narrative(case_id), briefs=service.briefs(case_id))
         return send_file(io.BytesIO(payload), mimetype="application/zip", as_attachment=True,
-                         download_name=f"jocky-evidence-{case_id}.zip")
+                         download_name=f"JOCKY_Evidence_Package_{case_id}.zip")
+
+
+    @app.get("/api/v1/investigations/<case_id>/artifacts-available")
+    def report_artifacts_available(case_id):
+        """What this investigation can produce, and how large each one is.
+
+        Rendered here rather than guessed by the client, so the page counts it
+        shows are the ones in the documents. A client that estimated them would
+        eventually be wrong, and a wrong page count on a forensic report is the
+        kind of small dishonesty that costs trust in the rest.
+        """
+        from backend.brief_pdf import render_routine_pdf
+        report, routine = service.routine_activity(case_id)
+        investigator = render_investigator_pdf(report)
+        routine_pdf = render_routine_pdf(report, routine)
+        counts = report.get("record_counts") or {}
+        return {
+            "investigator_report": {
+                "name": f"JOCKY_Investigator_Report_{case_id}.pdf",
+                "pages": page_count(investigator), "bytes": len(investigator),
+                "description": "The investigator-facing narrative. No raw evidence.",
+            },
+            "routine_activity": {
+                "name": f"jocky-routine-{case_id}.pdf",
+                "pages": page_count(routine_pdf), "bytes": len(routine_pdf),
+                "groups": routine.get("group_count", 0),
+                "records": (routine.get("totals") or {}).get("records", 0),
+                "description": ("Activity the machine's own records account for, grouped. "
+                                "Optional, and never the primary report."),
+            },
+            "evidence_package": {
+                "name": f"JOCKY_Evidence_Package_{case_id}.zip",
+                "records": sum(value for key, value in counts.items()
+                               if key in ("execution_source_records", "command_history_records",
+                                          "session_records", "artifacts", "findings")),
+                "record_counts": counts,
+                "description": ("Everything collected, with a manifest and a digest for every "
+                                "file. Nothing was removed from it to shorten the report."),
+            },
+            "review_briefs": {
+                "generated": len(service.briefs(case_id)),
+                "description": ("One or two pages about a single artifact, finding, activity, "
+                                "lead or thread. Generated on request."),
+            },
+            "note": ("Three documents, each answering a different question: what do I need to "
+                     "know, tell me about this one thing, show me everything."),
+        }
 
     @app.post("/api/v1/shutdown")
     def stop():

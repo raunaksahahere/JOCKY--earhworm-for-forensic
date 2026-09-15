@@ -19,7 +19,9 @@ from analysis.artifacts import artifact_from_hash_result, collect_artifacts, mer
 from analysis.correlation import correlate
 from analysis.cross_source import correlate_sources
 from analysis.detections import detect
-from analysis.recognition import SoftwareIndex, recognize_artifacts, recognize_events
+from analysis.recognition import (
+    RECOGNITION_VERSION, SoftwareIndex, recognize_artifacts, recognize_events,
+)
 from analysis.execution_history import collect_execution_history
 from analysis.execution_model import CollectionWindow
 from analysis.files import list_files
@@ -661,6 +663,7 @@ class Workstation:
             "SELECT count(*) AS n FROM execution_events WHERE investigation_id=?"
             " AND recognized_name IS NOT NULL", (case_id,))[0]["n"]
         return {
+            "recognition_version": RECOGNITION_VERSION,
             "artifacts_examined": total,
             "artifacts_recognized": sum(row["occurrences"] for row in rows),
             "events_recognized": events,

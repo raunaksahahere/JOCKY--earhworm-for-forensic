@@ -1,4 +1,22 @@
-"""Offline paginated reports rendered exclusively from persisted snapshots."""
+"""
+Offline paginated reports rendered exclusively from persisted snapshots.
+
+Two documents come out of one payload.
+
+`render_investigator_pdf` is the report an investigator reads: the narrative,
+the leads, the threads worth following, the timeline, and what could not be
+collected. Six to ten pages for a normal investigation, and -- this is the
+point -- its length is set by how much there is to say, not by how much was
+collected. A day of telemetry on a developer's machine is 1,700 records, and
+printing them made a 71-page document that nobody finishes.
+
+`render_pdf` is the same report with every appendix appended, kept because it is
+what the evidence package carries and what existing callers expect. Nothing was
+removed from it; the primary report simply stops before it starts.
+
+The evidence is identical either way. Only the presentation differs, and the
+primary report says where the rest lives.
+"""
 import io
 import threading
 from pathlib import Path
@@ -12,6 +30,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
+
+from analysis.threads import select_reported_threads
 
 _LOCK = threading.Lock()
 
@@ -63,7 +83,13 @@ def _table(rows, widths):
     return table
 
 
-def render_pdf(report):
+def render_pdf(report, *, detailed=True):
+    """The full document: narrative plus every appendix.
+
+    `detailed=False` produces the investigator report alone. Prefer the named
+    wrappers below; this parameter exists so both documents are built by one
+    code path and cannot drift apart in wording.
+    """
     # ReportLab font registration/subsetting is shared process state.
     with _LOCK:
         for name, filename in (("Jocky", "NotoSans-Regular.ttf"), ("Devanagari", "NotoSansDevanagari-Regular.ttf"), ("Bengali", "NotoSansBengali-Regular.ttf")):
@@ -95,6 +121,36 @@ def render_pdf(report):
         story = []
         def p(value, style=body):
             story.append(Paragraph(markup(value), style))
+
+        def build():
+            """Paginate and render whatever is in the story so far.
+
+            Both documents finish through here, so the footer, the margins and
+            the font-coverage note are identical in each and cannot drift.
+            """
+            if missing:
+                p("Font coverage limitation", heading)
+                p("Unsupported glyphs are preserved as code-point labels: "
+                  + ", ".join(sorted(missing))
+                  + ". Exact Unicode text remains in the JSON report.")
+            output = io.BytesIO()
+            document = SimpleDocTemplate(
+                output, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42,
+                title=("JOCKY Investigator Report" if not detailed
+                       else "JOCKY Investigation Report"),
+                author="JOCKY")
+
+            def footer(canvas, rendered):
+                canvas.saveState()
+                canvas.setFont("Jocky", 8)
+                canvas.setFillColor(colors.HexColor("#526575"))
+                canvas.drawString(42, 24, "JOCKY | Authorized local forensic collection")
+                canvas.drawRightString(A4[0] - 42, 24, f"Page {rendered.page}")
+                canvas.restoreState()
+
+            document.build(story, onFirstPage=footer, onLaterPages=footer)
+            return output.getvalue()
+
         p("JOCKY", title)
         p("DEFENSIVE FORENSIC INVESTIGATION", heading)
         p(f"Report {report.get('report_id')} | Schema {report.get('schema_version')}")
@@ -287,13 +343,24 @@ def render_pdf(report):
             rule()
 
         # --- Threads: related activity read as one story -------------------
-        p("4. Investigation threads", heading)
+        p("4. Important investigation threads", heading)
         threads = report.get("threads", []) or []
         p("Records that appear related, grouped so a sequence reads as one story. A thread states "
           "that records appear related; it does not state what anyone intended by them.")
+        selection = select_reported_threads(threads, limit=MAX_MAIN_THREADS)
+        tallies = selection["counts"]
         if not threads:
             p("No groups of related activity were identified.")
-        for thread in threads[:MAX_MAIN_THREADS]:
+        else:
+            # The tally first, so an investigator can see what was set aside
+            # rather than wondering whether twenty-five threads existed.
+            kv("Investigation threads", tallies["total"])
+            kv("  Priority 1", tallies["priority_1"])
+            kv("  Priority 2", tallies["priority_2"])
+            kv("  Informational but noteworthy", tallies["noteworthy"])
+            kv("  Routine", tallies["routine"])
+            p(selection["note"])
+        for thread in selection["reported"]:
             p(f"{thread['thread_id']}   {PRIORITY_LABELS[thread['priority']].upper()}   "
               f"{TRIAGE_LABELS.get(thread['classification'], thread['classification'])}", entry)
             p(f"{thread['title']} — {thread['activity_count']} activities, "
@@ -302,7 +369,8 @@ def render_pdf(report):
                 p(command, mono)
             if len(thread["commands"]) > MAX_THREAD_COMMANDS:
                 p(f"   ... {len(thread['commands']) - MAX_THREAD_COMMANDS} further commands in "
-                  "this thread are in Appendix B.")
+                  "this thread are "
+                  + ("in Appendix B." if detailed else "in the evidence package."))
             p(f"Why: {thread['why']}")
             p(f"Execution: {thread['execution']}")
             for unknown in thread.get("unknowns", [])[:2]:
@@ -311,8 +379,10 @@ def render_pdf(report):
               + (f", +{len(thread['evidence_references']) - 8} more"
                  if len(thread["evidence_references"]) > 8 else ""))
             rule()
-        if len(threads) > MAX_MAIN_THREADS:
-            p(f"{len(threads) - MAX_MAIN_THREADS} further threads are listed in Appendix B.")
+        if selection["withheld"]:
+            p(f"{selection['withheld']} further thread(s) are not printed here. "
+              + ("They are listed in full in Appendix C-2." if detailed else
+                 "They are in the evidence package, each with its evidence identifiers."))
 
         # --- The short timeline --------------------------------------------
         p("5. Significant events", heading)
@@ -359,17 +429,48 @@ def render_pdf(report):
         for note in report.get("limitations", []) or []:
             p(f"   {note}")
 
-        p("9. Evidence package", heading)
-        p("The appendices that follow hold the complete record: every activity, the full command "
-          "history, every finding, the process listing, artifact observations and provenance. "
-          "Nothing was removed to shorten this report — the sections above are a presentation of "
-          "the same evidence.")
+        p("9. Evidence package and next steps", heading)
+        if detailed:
+            p("The appendices that follow hold the complete record: every activity, the full "
+              "command history, every finding, the process listing, artifact observations and "
+              "provenance. Nothing was removed to shorten this report — the sections above are a "
+              "presentation of the same evidence.")
+        else:
+            p("This report is the investigator-facing narrative. It is deliberately short, and its "
+              "length reflects how much there is to say rather than how much was collected — "
+              f"{activity.get('record_count', 0)} records were collected and none were discarded to "
+              "shorten it.")
+            p("Everything behind the statements above is in the evidence package, exported "
+              "separately:", entry)
+            p("JOCKY_Evidence_Package_" + str(report.get("investigation_id", "")) + ".zip", mono)
+            for line in (
+                "full command history, every activity record and every finding",
+                "process, artifact, browser, USB, network, driver and memory evidence",
+                "the investigation program, its compiled IR and the execution plan",
+                "the audit trail, provenance and a SHA-256 for every file in the package",
+            ):
+                p(f"  — {line}")
+            p("Two further documents are available and are not appended here: the routine activity "
+              "report, which groups everything the machine could account for, and a review brief, "
+              "which answers \u201cwhat is this and do I care\u201d about one artifact, finding or "
+              "thread on one or two pages.")
+            p("To follow up any statement in this report, take its evidence identifier and look it "
+              "up in the package. Every identifier printed above resolves to a stored record.")
         kv("Total records collected", activity.get("record_count", 0))
         kv("Distinct activities", activity.get("group_count", 0))
         kv("Evidence identifiers", "EXEC- execution, CMD- command history, SESS- session, "
                                    "ART- artifact, F- finding")
-        fields(report.get("provenance", {}))
-        fields(report.get("versions", {}))
+        if detailed:
+            fields(report.get("provenance", {}))
+            fields(report.get("versions", {}))
+        else:
+            # The versions belong on the record even in the short document: a
+            # report that cannot say which build produced it is not evidence of
+            # anything. The provenance tables stay in the package.
+            applied = report.get("versions") or {}
+            kv("Produced by", f"JOCKY {applied.get('application')} "
+                              f"(report schema {applied.get('report_schema')}, "
+                              f"database schema {applied.get('database_schema')})")
 
         # Single-command reports carry these instead of a collection.
         for label, key in (("Command identity", "command"), ("Normalized command", "normalized_command"),
@@ -377,6 +478,11 @@ def render_pdf(report):
             if key in report:
                 p(label, heading)
                 fields(report[key])
+
+        if not detailed:
+            # The primary report ends here. Raw evidence volume must not inflate
+            # it, and appending the appendices is exactly how it would.
+            return build()
 
         story.append(PageBreak())
         p("Appendix A: telemetry sources consulted", heading)
@@ -445,18 +551,87 @@ def render_pdf(report):
                 [("", "command"), ("state", "state"), ("started", "started_at"),
                  ("evidence", "result_reference")])
 
-        if missing:
-            p("Font coverage limitation", heading)
-            p("Unsupported glyphs are preserved as code-point labels: " + ", ".join(sorted(missing)) + ". Exact Unicode text remains in the JSON report.")
-        output = io.BytesIO()
-        doc = SimpleDocTemplate(output, pagesize=A4, rightMargin=42, leftMargin=42, topMargin=42, bottomMargin=42,
-                                title="JOCKY Investigation Report", author="JOCKY")
-        def footer(canvas, doc):
-            canvas.saveState()
-            canvas.setFont("Jocky", 8)
-            canvas.setFillColor(colors.HexColor("#526575"))
-            canvas.drawString(42, 24, "JOCKY | Authorized local forensic collection")
-            canvas.drawRightString(A4[0] - 42, 24, f"Page {doc.page}")
-            canvas.restoreState()
-        doc.build(story, onFirstPage=footer, onLaterPages=footer)
-        return output.getvalue()
+        return build()
+
+
+def render_investigator_pdf(report) -> bytes:
+    """The report an investigator reads. No appendices, no raw evidence.
+
+    Six to ten pages for a normal investigation. Its length is set by how much
+    there is to say, which is the whole point: a day of telemetry on a busy
+    machine is well over a thousand records, and printing them produced a
+    seventy-page document that nobody finished.
+    """
+    return render_pdf(report, detailed=False)
+
+
+def render_full_pdf(report) -> bytes:
+    """The same report with every appendix, as carried in the evidence package."""
+    return render_pdf(report, detailed=True)
+
+
+def extract_text(pdf: bytes) -> str:
+    """The visible text of a rendered document.
+
+    Needed because a test that greps the raw file for "the report says X" passes
+    against a report that says no such thing: the fonts here are subset CID
+    fonts, so the content streams hold glyph indices rather than characters, and
+    the streams themselves are ASCII85-then-Flate encoded.
+
+    So this decodes the streams, reads the ToUnicode CMap the document carries
+    for its own fonts, and maps the glyph codes back. It is not a general PDF
+    reader -- it exists so assertions about what a document contains are
+    assertions about what a reader would see.
+    """
+    import base64
+    import binascii
+    import re
+    import zlib
+
+    streams = [match.group(1).strip(b"\r\n")
+               for match in re.finditer(rb"stream(.*?)endstream", pdf, re.S)]
+
+    def decode(raw):
+        for attempt in (lambda data: zlib.decompress(base64.a85decode(data, adobe=True)),
+                        zlib.decompress,
+                        lambda data: base64.a85decode(data, adobe=True),
+                        lambda data: data):
+            try:
+                return attempt(raw)
+            except (zlib.error, binascii.Error, ValueError):
+                continue
+        return b""
+
+    decoded = [decode(raw) for raw in streams]
+
+    # The glyph-to-character table the document supplies for its own fonts.
+    glyphs = {}
+    for content in decoded:
+        if b"beginbfchar" not in content:
+            continue
+        for code, value in re.findall(rb"<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>",
+                                      content[content.index(b"beginbfchar"):]):
+            point = int(value, 16)
+            if point:
+                glyphs[int(code, 16)] = chr(point)
+
+    collected = []
+    for content in decoded:
+        if b"beginbfchar" in content or b"/CIDInit" in content:
+            continue
+        for literal in re.findall(rb"\((?:[^()\\]|\\.)*\)", content):
+            body = literal[1:-1]
+            body = re.sub(rb"\\([()\\])", rb"\1", body)
+            collected.append("".join(glyphs.get(byte, "") for byte in body))
+    return " ".join(part for part in collected if part.strip())
+
+
+def page_count(pdf: bytes) -> int:
+    """How many pages a rendered document has.
+
+    Counted from the page objects in the file rather than tracked while
+    building, so the number is the one a reader would get.
+    """
+    import re
+
+    return len(re.findall(rb"/Type\s*/Page[^s]", pdf))

@@ -321,3 +321,65 @@ def _describe(members, link_reason) -> dict:
         "note": ("A thread states that records appear related. It does not state what anyone "
                  "intended by them."),
     }
+
+
+#: How many threads the primary investigator report prints in full. The rest are
+#: counted and summarised; the complete list is in the evidence package.
+MAX_REPORTED_THREADS = 6
+
+#: A Priority 3 thread earns a place in the primary report only if it carries
+#: information beyond "these look related" -- a confirmed execution, several
+#: distinct commands, or a shape that names a behaviour rather than a grouping.
+INFORMATIVE_SHAPES = ("install_then_use", "fetch_then_execute", "repeated_execution")
+MIN_INFORMATIVE_ACTIVITIES = 3
+
+
+def _informative(thread) -> bool:
+    """Whether a Priority 3 thread tells an investigator something.
+
+    Deliberately selective. A thread whose only claim is that its records
+    resemble each other is a grouping, not a lead, and printing twenty of them
+    is how a report stops being read. Two things earn a place: a shape that
+    names a behaviour rather than a resemblance, or confirmed execution across
+    enough distinct commands that the sequence is worth following.
+    """
+    if thread.get("shape") in INFORMATIVE_SHAPES:
+        return True
+    return bool(thread.get("execution_confirmed")
+                and thread.get("activity_count", 0) >= MIN_INFORMATIVE_ACTIVITIES)
+
+
+def select_reported_threads(threads, *, limit=MAX_REPORTED_THREADS) -> dict:
+    """Which threads the primary report prints, and a count of the rest.
+
+    Printing all twenty-five threads is how a report becomes something nobody
+    finishes. Priority 1 and 2 always appear. A Priority 3 thread appears only
+    if it carries information beyond the fact that its records resemble each
+    other, and the ones that do not are counted so the investigator can see
+    what was set aside rather than wondering.
+    """
+    threads = list(threads or [])
+    priority_one = [thread for thread in threads if thread.get("priority") == PRIORITY_1]
+    priority_two = [thread for thread in threads if thread.get("priority") == PRIORITY_2]
+    remainder = [thread for thread in threads
+                 if thread.get("priority") not in (PRIORITY_1, PRIORITY_2)]
+    noteworthy = [thread for thread in remainder if _informative(thread)]
+    routine = [thread for thread in remainder if not _informative(thread)]
+
+    reported = (priority_one + priority_two + noteworthy)[:limit]
+    return {
+        "reported": reported,
+        "counts": {
+            "total": len(threads),
+            "priority_1": len(priority_one),
+            "priority_2": len(priority_two),
+            "noteworthy": len(noteworthy),
+            "routine": len(routine),
+            "printed": len(reported),
+        },
+        "withheld": len(threads) - len(reported),
+        "note": ("Priority 1 and 2 threads always appear here. A priority 3 thread appears only "
+                 "where it carries information beyond the resemblance that grouped it. Every "
+                 "thread, printed or not, is in the evidence package with its evidence "
+                 "identifiers."),
+    }
