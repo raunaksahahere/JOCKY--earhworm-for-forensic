@@ -73,6 +73,25 @@ crashing. It does not establish that they find what a real host would hold, that
 the event formats match what current Windows emits, or that the parsing is
 correct against real data.
 
+### Recognition has no Windows source
+
+`analysis/recognition.py` reads a package database, a snap directory and a file
+of vendor installation layouts. The first two do not exist on Windows, and the
+layout descriptors are written for Linux and macOS installation shapes, so on a
+Windows host recognition accounts for nothing.
+
+It says so rather than failing: `SoftwareIndex` reports each source as
+`NOT_AVAILABLE` with the path it looked in, and every artifact comes back
+`recognized: false`. Nothing is silently assumed, and no artifact is described
+as accounted-for when nothing accounted for it.
+
+But the consequence is real: **the routine / recognized presentation category
+does almost no work on Windows.** An investigator there sees the full list of
+activity rather than the reduced one, because the machine's own records are not
+being read to account for any of it. Closing that means reading the Windows
+installed-programs registry and the side-by-side store, and validating the
+result against a real host.
+
 ### The platform adapter is honest about this
 
 `WindowsAdapter` carries `validated = False`, and `describe_plan` prints

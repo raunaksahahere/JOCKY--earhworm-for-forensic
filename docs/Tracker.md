@@ -46,6 +46,7 @@ State of the work as of application version 0.8.1, database schema 7.
 |------|----------------|---------------|
 | **Windows forensic collection** | The build and packaged runtime are validated on a Windows runner; the collectors are fixture-tested only | A real investigated Windows host with Sysmon and 4688 auditing, compared against Event Viewer |
 | **Windows adapter coverage** | Four of six selectable sources have no Windows collector: BROWSER, USB, DRIVERS, SERVICES | Collectors written and validated per source |
+| **Windows recognition** | Recognition reads a package database and a snap directory, neither of which exists on Windows, so it accounts for nothing there and the routine category does almost no work | Reading the installed-programs registry, validated against a host |
 | **Python suite on Windows** | 17 tests assume POSIX paths, permissions or `/proc`; they predate this pass and fail on `windows-latest` | Per-test platform handling, once there is a Windows host to validate against |
 | **Real memory image** | None was available; the workflow around it is complete, the analysis path is fixture-only | A lab image and Volatility3 installed |
 | **Forensic container extraction** | Deliberately out of scope; containers are identified, hashed and preserved | An integration with ewfmount or equivalent, if it turns out to be wanted |

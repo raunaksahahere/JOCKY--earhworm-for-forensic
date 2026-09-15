@@ -504,6 +504,7 @@ class Workstation:
             index = SoftwareIndex()
             recognition = recognize_artifacts(artifacts.get("artifacts", []) or [], index=index)
             recognition.update(recognize_events(execution.get("events", []) or [], index=index))
+            self._record_recognition_sources(case_id, recognition.get("sources") or [])
             correlation = correlate(execution=execution, artifacts=artifacts, processes=processes)
             correlation["findings"].extend(
                 detect(drivers=supplementary.get("DRIVERS"), memory=supplementary.get("MEMORY")))
@@ -649,6 +650,19 @@ class Workstation:
         return self.store.rows(query + " ORDER BY created_at DESC LIMIT ?",
                                tuple(args) + (int(limit),))
 
+    def _record_recognition_sources(self, case_id, sources):
+        """Keep which recognition sources were readable, alongside the result.
+
+        A collection that recognized nothing because there was no package
+        database to read is a different statement from one that read the
+        database and found nothing in it. Windows is always the first, and a
+        report that did not say so would leave an investigator to assume the
+        second.
+        """
+        with self.store.transaction() as db:
+            db.execute("INSERT OR REPLACE INTO metadata VALUES (?,?)",
+                       (f"recognition_sources:{case_id}", encode(sources)))
+
     def _recognition_summary(self, case_id):
         """What the machine could account for, read back from stored rows."""
         rows = self.store.rows(
@@ -662,8 +676,11 @@ class Workstation:
         events = self.store.rows(
             "SELECT count(*) AS n FROM execution_events WHERE investigation_id=?"
             " AND recognized_name IS NOT NULL", (case_id,))[0]["n"]
+        stored = self.store.rows("SELECT value FROM metadata WHERE key=?",
+                                 (f"recognition_sources:{case_id}",))
         return {
             "recognition_version": RECOGNITION_VERSION,
+            "sources": json.loads(stored[0]["value"]) if stored else [],
             "artifacts_examined": total,
             "artifacts_recognized": sum(row["occurrences"] for row in rows),
             "events_recognized": events,
