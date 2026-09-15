@@ -236,3 +236,71 @@ def test_a_path_that_comes_to_mean_something_else_is_refused(tmp_path, monkeypat
     monkeypatch.setattr(os, "stat", shifting_stat)
     with pytest.raises(RuntimeError, match="changed during hashing"):
         hashing.hash_file(str(target))
+
+
+def test_an_artifact_record_keeps_the_path_the_evidence_named(tmp_path):
+    """The record is about what the evidence said, not what this host resolved.
+
+    Storing os.path.abspath here turned an endpoint's "/usr/bin/curl" into
+    "D:\\usr\\bin\\curl" when the analysis ran on Windows -- a location that was
+    never in the evidence -- and every join that depended on the path stopped
+    matching.
+    """
+    from analysis.artifacts import observe_artifact
+    from analysis.evidence_paths import normalize
+
+    present = tmp_path / "tool.bin"
+    present.write_bytes(b"x")
+    record = observe_artifact(str(present), source="test")
+
+    assert record["path"] == normalize(str(present))
+    assert record["examined_path"], "what this machine looked at must be recorded too"
+    assert record["hash"], "the local read must still have happened"
+
+
+def test_an_evidence_path_from_another_host_is_not_rewritten():
+    """The case the multi-endpoint architecture makes ordinary."""
+    from analysis.artifacts import observe_artifact
+
+    record = observe_artifact("/usr/bin/curl-from-an-endpoint", source="endpoint evidence")
+    assert record["path"] == "/usr/bin/curl-from-an-endpoint"
+    assert record["filename"] == "curl-from-an-endpoint"
+
+
+def test_correlation_joins_on_the_evidence_spelling():
+    """A finding must be produced whichever separator the evidence used."""
+    from analysis.correlation import correlate
+
+    events = [{"reference": "EXEC-0001", "source": "journal", "executable": "/opt/tool/run.sh",
+               "evidence_kind": "EXECUTION_EVIDENCE", "execution_confirmed": True,
+               "timestamp": "2026-03-14T09:00:00+00:00"}]
+    artifacts = [{"reference": "ART-0001", "path": "/opt/tool/run.sh", "filename": "run.sh",
+                  "collection_status": "COLLECTED", "hash": "a" * 64,
+                  "hash_algorithm": "SHA256", "size_bytes": 1024, "indicators": []}]
+    result = correlate(execution={"events": events}, artifacts={"artifacts": artifacts},
+                       processes={})
+    categories = {finding["category"] for finding in result["findings"]}
+    assert "execution_artifact_matched" in categories, (
+        "the execution record and the artifact name the same path and did not join")
+
+
+def test_an_artifact_records_both_what_the_evidence_said_and_where_it_looked(tmp_path):
+    """The record answers two questions and must not conflate them."""
+    from analysis.artifacts import observe_artifact
+
+    target = tmp_path / "present.bin"
+    target.write_bytes(b"x")
+    record = observe_artifact(str(target), source="test")
+    assert record["path"] == normalize(str(target))
+    assert record["collection_status"] == "COLLECTED"
+
+
+def test_an_artifact_for_evidence_from_another_host_keeps_that_hosts_path():
+    """The join depends on it, and the file is legitimately not here."""
+    from analysis.artifacts import observe_artifact
+
+    record = observe_artifact("/usr/bin/vendor-agent", source="endpoint evidence")
+    assert record["path"] == "/usr/bin/vendor-agent", (
+        "resolving it locally would invent a drive that was never in the evidence")
+    assert record["filename"] == "vendor-agent"
+    assert record["collection_status"] == "MISSING"

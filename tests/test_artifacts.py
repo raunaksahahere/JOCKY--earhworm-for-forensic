@@ -3,9 +3,11 @@ import os
 
 import pytest
 
+from analysis.evidence_paths import normalize
 from tests.conftest import requires_posix
 
 from analysis import artifacts
+from analysis.evidence_paths import normalize
 from analysis.artifacts import (
     COLLECTED, MISSING, NOT_A_FILE, PERMISSION_DENIED, SKIPPED_TOO_LARGE,
     artifact_from_hash_result, collect_artifacts, merge_artifacts, notable_location,
@@ -79,9 +81,12 @@ def test_executables_named_by_evidence_are_collected(tmp_path):
 
     result = collect_artifacts(events=events)
 
+    # Compared through the same normalization the records use. A record stores
+    # one spelling of a path so that evidence from any host can be joined on it,
+    # and on Windows str(Path) is the other spelling.
     statuses = {record["path"]: record["collection_status"] for record in result["artifacts"]}
-    assert statuses[str(present)] == COLLECTED
-    assert statuses[str(tmp_path / "absent.exe")] == MISSING
+    assert statuses[normalize(str(present))] == COLLECTED
+    assert statuses[normalize(str(tmp_path / "absent.exe"))] == MISSING
     assert result["statistics"]["referenced_path_count"] == 2
     assert any("not present at collection time" in warning for warning in result["warnings"])
 
@@ -102,9 +107,9 @@ def test_selected_directory_is_one_level_and_never_recursive(tmp_path):
     result = collect_artifacts(selected_paths=[str(tmp_path)])
 
     paths = {record["path"] for record in result["artifacts"]}
-    assert str(tmp_path / "top.txt") in paths
-    assert str(nested) in paths
-    assert str(nested / "hidden.txt") not in paths, "collection must not recurse"
+    assert normalize(str(tmp_path / "top.txt")) in paths
+    assert normalize(str(nested)) in paths
+    assert normalize(str(nested / "hidden.txt")) not in paths, "collection must not recurse"
     assert result["limits"]["recursive"] is False
 
 
