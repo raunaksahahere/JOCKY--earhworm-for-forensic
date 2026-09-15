@@ -22,19 +22,28 @@ from backend.versions import DATABASE_SCHEMA_VERSION, REPORT_SCHEMA_VERSION, ver
 
 
 def docker_usable():
+    """Whether two separate Linux environments can actually be started here.
+
+    Docker being installed is not enough: the Windows runners have a Docker
+    whose daemon runs Windows containers, which cannot host the Linux images
+    this validation uses. Asking the daemon what it runs is the difference
+    between skipping honestly and failing for a reason that is not a defect.
+    """
     if not shutil.which("docker"):
         return False
     try:
-        return subprocess.run(["docker", "info"], capture_output=True,
-                              timeout=30).returncode == 0
+        probe = subprocess.run(["docker", "info", "--format", "{{.OSType}}"],
+                               capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return False
+    return probe.returncode == 0 and probe.stdout.strip().lower() == "linux"
 
 
 needs_docker = pytest.mark.skipif(
     not docker_usable(),
-    reason="real multi-host validation needs two separate Linux environments; "
-           "without them the requirement matrix must say NOT VALIDATED")
+    reason="real multi-host validation needs two separate Linux environments; without a "
+           "Linux container daemon there are none, and the requirement matrix must keep "
+           "saying NOT VALIDATED rather than this passing vacuously")
 
 
 @pytest.fixture

@@ -72,8 +72,20 @@ def hash_file(path: str, algorithm: str = "sha256") -> dict:
         after_read = os.fstat(handle.fileno())
 
     stat = os.stat(path)
-    if any(_identity(snapshot) != _identity(before) for snapshot in (opened, after_read, stat)):
-        raise RuntimeError("File changed during hashing; digest was not recorded")
+    # Two comparisons, each between snapshots taken the same way.
+    #
+    # An open handle and a path report the same file differently on Windows --
+    # os.fstat and os.stat return different device and index values for it --
+    # so comparing one against the other reported every file as having changed
+    # and refused to record any digest at all. Comparing like with like detects
+    # both of the things this check is for: the file changing while it was read
+    # (the handle, before and after), and the path coming to mean something else
+    # (the path, before and after).
+    if _identity(after_read) != _identity(opened):
+        raise RuntimeError("File changed while it was being read; digest was not recorded")
+    if _identity(stat) != _identity(before):
+        raise RuntimeError("The file at this path changed during hashing; "
+                           "digest was not recorded")
     if size_bytes != before.st_size:
         raise RuntimeError("File changed during hashing; digest was not recorded")
 

@@ -2,6 +2,8 @@
 import os
 from datetime import datetime, timedelta, timezone
 
+import platform
+
 import pytest
 
 from tests.conftest import requires_posix
@@ -235,6 +237,9 @@ def test_cancellation_is_honoured(window):
 
 
 @pytest.mark.real_telemetry
+@pytest.mark.skipif(platform.system() != "Linux",
+                    reason="reads this host's Linux telemetry; the Windows collectors are "
+                           "exercised separately and are not validated against a real host")
 def test_real_host_collection_reports_every_source():
     result = collect_execution_history(window_hours=1)
 

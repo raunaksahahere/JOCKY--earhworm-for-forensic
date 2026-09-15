@@ -11,8 +11,7 @@ activity, because an investigator needs to know what could not be seen.
 
 from __future__ import annotations
 
-import os
-
+from .evidence_paths import basename, is_absolute, normalize
 from .execution_model import AVAILABLE, NOT_AVAILABLE, NOT_ENABLED, PERMISSION_DENIED
 from .triage import (
     LABELS, NEEDS_REVIEW, NOT_HARMFUL, POTENTIALLY_HARMFUL, PRIORITY, PRIORITY_1,
@@ -84,13 +83,17 @@ def correlate(*, execution=None, artifacts=None, processes=None):
     artifacts = artifacts or {}
     events = execution.get("events", []) or []
     records = artifacts.get("artifacts", []) or []
-    by_path = {record["path"]: record for record in records}
+    # Keyed on the evidence's own spelling of the path, normalized only for
+    # separator and repeats. Absolutizing here against the local filesystem
+    # would rewrite a Linux endpoint's paths onto the analysing machine's drive
+    # and lose every join.
+    by_path = {normalize(record["path"]): record for record in records}
 
     findings, links = [], []
     sources_by_event = {}
     for event in events:
         path = event.get("executable")
-        if path and os.path.isabs(path):
+        if path and is_absolute(path):
             sources_by_event.setdefault(path, set()).add(event.get("source"))
 
     findings.extend(_artifact_findings(events, by_path, sources_by_event, links))
@@ -132,9 +135,9 @@ def _artifact_findings(events, by_path, sources_by_event, links):
     findings, reported_missing, reported_location, reported_match = [], set(), set(), set()
     for event in events:
         path = event.get("executable")
-        if not path or not os.path.isabs(path):
+        if not path or not is_absolute(path):
             continue
-        record = by_path.get(os.path.abspath(path))
+        record = by_path.get(normalize(path))
         present = bool(record and record["collection_status"] == "COLLECTED")
         links.append({
             "execution_event_id": event.get("reference") or event.get("event_id"),
@@ -150,7 +153,7 @@ def _artifact_findings(events, by_path, sources_by_event, links):
             reported_missing.add(path)
             findings.append(_finding(
                 "execution_artifact_missing", MEDIUM,
-                f"Execution evidence names an executable that is no longer present: {os.path.basename(path)}",
+                f"Execution evidence names an executable that is no longer present: {basename(path)}",
                 (f"{event.get('source')} recorded execution activity for {path}, but no file exists at that "
                  "path at collection time. This is expected after a package upgrade, an uninstall or a "
                  "temporary file being cleaned up, and it is also what removal of a program after use looks "
@@ -172,7 +175,7 @@ def _artifact_findings(events, by_path, sources_by_event, links):
             reported_location.add(path)
             findings.append(_finding(
                 "unusual_execution_location", MEDIUM,
-                f"Execution from a writable or temporary location: {os.path.basename(path)}",
+                f"Execution from a writable or temporary location: {basename(path)}",
                 (f"{path} sits under '{record['notable_location']}', a location that is writable by "
                  "unprivileged users and commonly used for staging. Legitimate installers, updaters and "
                  "build tools also run from these directories, so this is a reason to inspect the artifact, "
@@ -194,7 +197,7 @@ def _artifact_findings(events, by_path, sources_by_event, links):
             reported_match.add(path)
             findings.append(_finding(
                 "execution_artifact_matched", INFO,
-                f"Execution evidence corroborated by a present artifact: {os.path.basename(path)}",
+                f"Execution evidence corroborated by a present artifact: {basename(path)}",
                 (f"{event.get('source')} names {path}, and a file exists there whose "
                  f"{record['hash_algorithm']} digest is {record['hash']}. The digest records the bytes "
                  "present now; it does not prove these are the bytes that ran."),

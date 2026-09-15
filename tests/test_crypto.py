@@ -4,7 +4,11 @@ from cryptography.exceptions import InvalidTag
 from crypto.crypto import encrypt_file, decrypt_file
 
 
-@pytest.mark.parametrize("payload", [b"", b"abc", bytes(range(256))*12000])
+# Named, because pytest builds the temporary directory from the test id and a
+# three-megabyte binary payload becomes a three-megabyte directory name. Linux
+# tolerated it; Windows rejected the path outright.
+@pytest.mark.parametrize("payload", [b"", b"abc", bytes(range(256)) * 12000],
+                         ids=["empty", "small", "multi-megabyte"])
 def test_round_trip_preserves_source(tmp_path, payload):
     source, encrypted, restored = (tmp_path / name for name in ("来源 α.txt", "export.enc", "restored.txt"))
     source.write_bytes(payload)

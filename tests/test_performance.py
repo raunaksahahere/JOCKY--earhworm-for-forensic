@@ -119,16 +119,28 @@ def test_one_failing_collector_does_not_lose_the_others(tmp_path, monkeypatch):
     def explode(**_kwargs):
         raise RuntimeError("this collector is broken")
 
-    monkeypatch.setitem(plan_runner.REGISTRY, "NETWORK",
-                        (explode, "analysis.network.collect_network", "NETWORK"))
+    # A source that fails and a source that works, both chosen from what this
+    # platform's adapter actually supports. Naming USB here passed on Linux and
+    # failed on Windows for the wrong reason: there is no Windows USB collector,
+    # so the "working collector" whose evidence had to survive never ran.
+    from compiler.plan import adapter_for
+
+    supported = [source for source in adapter_for().supported
+                 if source in plan_runner.REGISTRY and source not in plan_runner.BASELINE]
+    if len(supported) < 2:
+        pytest.skip(f"{adapter_for().name} has fewer than two selectable collectors")
+    broken, working_source = supported[0], supported[1]
+
+    monkeypatch.setitem(plan_runner.REGISTRY, broken,
+                        (explode, plan_runner.REGISTRY[broken][1], broken))
     working = {"status": "success", "classification": "CURRENT_OBSERVATION", "complete": True}
-    monkeypatch.setitem(plan_runner.REGISTRY, "USB",
-                        (lambda **_kwargs: working,
-                         "analysis.usb.collect_removable_media", "USB"))
+    monkeypatch.setitem(plan_runner.REGISTRY, working_source,
+                        (lambda **_kwargs: working, plan_runner.REGISTRY[working_source][1],
+                         working_source))
     service = Workstation(Store(Paths.resolve(str(tmp_path / "workspace"))))
     try:
         case = service.create_case({"title": "partial"})
-        service.collect(case["id"], {"paths": [], "sources": ["NETWORK", "USB"]})
+        service.collect(case["id"], {"paths": [], "sources": [broken, working_source]})
         deadline = clock.monotonic() + 120
         while clock.monotonic() < deadline:
             current = service.get_case(case["id"])
@@ -138,7 +150,7 @@ def test_one_failing_collector_does_not_lose_the_others(tmp_path, monkeypatch):
         assert current["status"] == "partially_completed", (
             "a broken collector must degrade the collection, not fail it")
         collected = {record["type"] for record in service.related(case["id"], "evidence")}
-        assert "USB" in collected, "the working collector's evidence must survive"
-        assert "NETWORK" in collected, "the failure itself must be recorded as evidence"
+        assert working_source in collected, "the working collector's evidence must survive"
+        assert broken in collected, "the failure itself must be recorded as evidence"
     finally:
         service.close()
