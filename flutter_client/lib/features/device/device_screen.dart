@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/theme/tokens.dart';
+import 'artifact_exports.dart';
 import '../../state/providers.dart';
 
 /// Views display backend observations verbatim; no forensic decisions in Dart.
@@ -767,25 +768,6 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
   }
 
-  Future<void> _exportRoutine({bool detailed = false}) async {
-    final caseId = widget.caseId;
-    if (caseId == null) return;
-    final path = await ref.read(fileSelectionProvider).pickSaveLocation(
-      suggestedName: 'jocky-routine-$caseId.pdf', extension: 'pdf');
-    if (path == null) return;
-    try {
-      final response = await ref.read(apiClientProvider).request(
-        '/api/v1/investigations/$caseId/routine/export', body: {'detailed': detailed});
-      await File(path).writeAsBytes(response.bodyBytes);
-      if (mounted) {
-        setState(() => _notice = 'Routine activity report written to $path. It describes activity '
-            'that raised no concern signal; it is not a guarantee of safety.');
-      }
-    } on Object catch (error) {
-      if (mounted) setState(() => _error = '$error');
-    }
-  }
-
   Widget _json(Object? value) => SelectableText(const JsonEncoder.withIndent('  ').convert(value), style: const TextStyle(fontFamily: 'monospace', fontSize: 12));
   Widget _section(String title, Object? value) => ExpansionTile(title: Text(title), initiallyExpanded: title == 'Device information', children: [Padding(padding: const EdgeInsets.all(16), child: Align(alignment: Alignment.centerLeft, child: _json(value)))]);
 
@@ -839,19 +821,8 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
       ] else ...[
         Wrap(spacing: 12, runSpacing: 8, children: [
           Chip(label: Text('Stage: ${_case?['status'] ?? 'preparing'}')),
-          if (_reports.isNotEmpty) FilledButton.icon(key: const Key('export-investigation-pdf'), onPressed: _busy ? null : () => _export('pdf'), icon: const Icon(Icons.picture_as_pdf), label: const Text('Export PDF')),
+          if (_reports.isNotEmpty) FilledButton.icon(key: const Key('export-investigation-pdf'), onPressed: _busy ? null : () => _export('pdf'), icon: const Icon(Icons.picture_as_pdf), label: const Text('Investigator report')),
           if (_reports.isNotEmpty) OutlinedButton(onPressed: _busy ? null : () => _export('json'), child: const Text('Export JSON')),
-          // Deliberately a separate document. The investigator report stays
-          // about what needs attention; everything the machine accounted for
-          // goes here, grouped, so it can be put on the record without being
-          // read line by line.
-          if (_reports.isNotEmpty)
-            OutlinedButton.icon(
-              key: const Key('export-routine-pdf'),
-              onPressed: _busy ? null : () => _exportRoutine(),
-              icon: const Icon(Icons.inventory_2_outlined, size: 16),
-              label: const Text('Routine activity PDF'),
-            ),
           if (_case != null && !terminal.contains(_case!['status']) && _case!['status'] != 'created') OutlinedButton(onPressed: () async { await ref.read(apiClientProvider).jsonRequest('/api/v1/investigations/${widget.caseId}/cancel', body: {}); if (mounted) setState(() => _notice = 'Cancellation requested; the current bounded step may finish first.'); }, child: const Text('Cancel collection')),
           TextButton(onPressed: () => context.go('/device'), child: const Text('All investigations')),
         ]),
@@ -866,6 +837,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
         const SizedBox(height: 16),
         _significantEventsCard(),
         const SizedBox(height: 16),
+        if (_reports.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          ArtifactExports(caseId: widget.caseId!),
+          const SizedBox(height: 16),
+        ],
         _activityPanel(),
         _section('Device information', _case?['device']),
         _section('Investigation context', _case),
